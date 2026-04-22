@@ -9,6 +9,7 @@
 #include <QFile>
 #include <QStandardPaths>
 #include <QDir>
+#include <QCoreApplication>
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowTitle("全能网页视频下载器 (支持 Cookie 绕过)");
@@ -38,6 +39,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     cookieBox->addItems({"无", "firefox", "chrome", "edge", "safari"});
     cookieBox->setCurrentText("firefox");
     urlLayout->addWidget(cookieBox);
+
+    // --- 合集模式复选框 ---
+    playlistCheckBox = new QCheckBox("合集模式");
+    urlLayout->addWidget(playlistCheckBox);
 
     analyzeBtn = new QPushButton("🔍 解析视频");
     urlLayout->addWidget(analyzeBtn);
@@ -109,6 +114,17 @@ void MainWindow::onAnalyzeClicked() {
     if (browser != "无") {
         args << "--cookies-from-browser" << browser;
     }
+
+    // --- 合集参数分流 ---
+    if (playlistCheckBox->isChecked()) {
+        // 如果是合集，开启合集解析，并使用 flat-playlist 加快 JSON 返回速度
+        args << "--yes-playlist" << "--flat-playlist";
+    } else {
+        // 正常模式：拒绝合集，防止误下整个播放列表
+        args << "--no-playlist";
+    }
+    // -------------------------
+
     args << "-J" << currentUrl;
     analyzeProcess->start(ytdlpPath, args);
 }
@@ -125,11 +141,32 @@ void MainWindow::handleAnalyzeFinished(int exitCode, QProcess::ExitStatus exitSt
     QJsonDocument doc = QJsonDocument::fromJson(jsonData);
     QJsonObject root = doc.object();
     QString title = root["title"].toString();
-    logMessage("✅ 提取成功: " + title);
-    
-    if (nameInput->text() == "video.mp4") {
-        nameInput->setText(title + ".mp4");
+
+    // --- 处理合集模式的 UI 表现 ---
+    if (playlistCheckBox->isChecked()) {
+        logMessage("✅ 识别到合集/列表: " + title);
+        logMessage("⚠️ 合集模式下，将自动为您下载所有分P的最佳画质。");
+        
+        resolutionBox->clear();
+        formatMap.clear();
+        formatMap.insert("自动最佳合集画质", "bestvideo+bestaudio/best");
+        resolutionBox->addItem("自动最佳合集画质");
+        
+        // 改变文件名输入框，提醒用户合集会自动编号
+        nameInput->setText("合集自动编号下载");
+        nameInput->setEnabled(false); // 禁用输入框防止乱改导致覆盖
+        
+        downloadBtn->setEnabled(true);
+        return; // 提前结束，跳过后续的单集画质扫描
     }
+    // ---------------------------------
+    
+    // 恢复输入框可用状态
+    nameInput->setEnabled(true);
+    logMessage("✅ 提取成功: " + title);
+    if (nameInput->text() == "video.mp4" || nameInput->text() == "合集自动编号下载") {
+        nameInput->setText(title + ".mp4");
+    } 
 
     QJsonArray formats = root["formats"].toArray();
     for (const QJsonValue &val : formats) {
@@ -184,8 +221,30 @@ void MainWindow::onDownloadClicked() {
     if (browser != "无") {
         args << "--cookies-from-browser" << browser;
     }
+     // --- 新增：跨平台修复 ffmpeg 路径丢失问题 ---
+    #ifdef Q_OS_WIN
+      // Windows 端：自动获取当前 exe 所在目录，并寻找配套的 ffmpeg.exe
+      QString ffmpegPath = QCoreApplication::applicationDirPath() + "/ffmpeg.exe";
+      if (QFile::exists(ffmpegPath)) {
+        args << "--ffmpeg-location" << ffmpegPath;
+      }
+    #else
+      // macOS 端：强制指定 Homebrew 安装的 ffmpeg 路径
+      if (QFile::exists("/opt/homebrew/bin/ffmpeg")) {
+        args << "--ffmpeg-location" << "/opt/homebrew/bin/ffmpeg";
+      }
+    #endif
+    // ---------------------------------------------    
     args << "-f" << formatId << "--merge-output-format" << "mp4" << "--newline" << "-o" << outName << currentUrl;
+    if (playlistCheckBox->isChecked()) {
+        args << "--yes-playlist";
+        args << "-o" << "%(playlist_index)02d_%(title)s.%(ext)s"; 
+    } else {
+        args << "--no-playlist";
+        args << "-o" << outName; 
+    }
 
+    args << currentUrl;
     downloadProcess->start(ytdlpPath, args);
 }
 

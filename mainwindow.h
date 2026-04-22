@@ -9,6 +9,7 @@
 #include <QComboBox>
 #include <QProcess>
 #include <QMap>
+#include <QCheckBox>
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -34,6 +35,7 @@ private:
     QPushButton *downloadBtn;
     QComboBox *resolutionBox;
     QComboBox *cookieBox;
+    QCheckBox *playlistCheckBox;
     QTextEdit *logConsole;
     QProgressBar *progressBar;
 
