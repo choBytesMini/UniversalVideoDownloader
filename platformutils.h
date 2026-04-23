@@ -11,6 +11,9 @@ public:
     // 获取 ffmpeg 可执行文件路径
     static QString findFfmpegPath();
 
+    // 获取 aria2c 可执行文件路径
+    static QString findAria2cPath();
+
     // 获取程序所在目录
     static QString getAppDir();
 
