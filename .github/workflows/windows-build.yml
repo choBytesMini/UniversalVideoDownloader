@@ -9,35 +9,35 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-    - name: Install Qt
-      uses: jurplel/install-qt-action@v4
-      with:
-        version: '6.6.2'
-        host: 'windows'
-        target: 'desktop'
-        arch: 'win64_msvc2019_64'
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.6.2'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_msvc2019_64'
 
-    - name: Configure CMake
-      # 注意：如果你的 CMakeLists.txt 在子文件夹 M3u8Downloader 里，这里要改路径
-      run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Configure CMake
+        # 注意：如果你的 CMakeLists.txt 在子文件夹 M3u8Downloader 里，这里要改路径
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
-    - name: Build Project
-      run: cmake --build build --config Release
+      - name: Build Project
+        run: cmake --build build --config Release
 
-    - name: Deploy Qt Dependencies
-      shell: pwsh
-      run: |
-         # 自动寻找生成的 exe 并提取依赖 dll
-        $EXE_PATH = Get-ChildItem -Path build -Filter "*.exe" -Recurse | Select-Object -First 1
-       if ($EXE_PATH) {
-            windeployqt $EXE_PATH.FullName
-        }
+      - name: Deploy Qt Dependencies
+        shell: pwsh
+        run: |
+          # 自动寻找生成的 exe 并提取依赖 dll
+          $EXE_PATH = Get-ChildItem -Path build -Filter "*.exe" -Recurse | Select-Object -First 1
+          if ($EXE_PATH) {
+              windeployqt $EXE_PATH.FullName
+          }
 
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: Windows-Downloader-App
-        path: build/
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Windows-Downloader-App
+          path: build/
