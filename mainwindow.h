@@ -11,6 +11,8 @@
 #include <QMap>
 #include <QCheckBox>
 
+class ToolManager;
+
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
@@ -21,7 +23,7 @@ public:
 private slots:
     void onAnalyzeClicked();
     void onDownloadClicked();
-    
+
     // QProcess 的异步回调
     void handleAnalyzeFinished(int exitCode, QProcess::ExitStatus exitStatus);
     void handleDownloadOutput();
@@ -42,12 +44,15 @@ private:
     QProcess *analyzeProcess;
     QProcess *downloadProcess;
 
-    QMap<QString, QString> formatMap; // 存储 "分辨率显示名称" -> "底层 format_id"
+    QMap<QString, QString> formatMap;
     QString currentUrl;
     QString ytdlpPath;
+    QString ffmpegPath;
+
+    ToolManager *toolManager;
 
     void logMessage(const QString &msg);
-    void findYtDlpPath();
+    void setupToolManager();
 };
 
 #endif // MAINWINDOW_H

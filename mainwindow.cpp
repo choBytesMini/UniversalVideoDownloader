@@ -1,29 +1,26 @@
 #include "mainwindow.h"
-#include <QVBoxLayout>
+#include "platformutils.h"
+#include "toolmanager.h"
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
 #include <QHBoxLayout>
-#include <QLabel>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QJsonArray>
+#include <QLabel>
+#include <QMessageBox>
 #include <QRegularExpression>
-#include <QFile>
 #include <QStandardPaths>
-#include <QDir>
-#include <QCoreApplication>
+#include <QVBoxLayout>
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowTitle("全能网页视频下载器 (支持 Cookie 绕过)");
     resize(700, 500);
 
-    // 跨平台识别底层的 yt-dlp 执行文件路径
-#ifdef Q_OS_WIN
-    ytdlpPath = "yt-dlp.exe"; 
-#else
-    ytdlpPath = "/opt/homebrew/bin/yt-dlp";
-    if (!QFile::exists(ytdlpPath)) {
-        ytdlpPath = "yt-dlp"; 
-    }
-#endif
+    // 初始化路径
+    ytdlpPath = PlatformUtils::findYtdlpPath();
+    ffmpegPath = PlatformUtils::findFfmpegPath();
 
     QWidget *centralWidget = new QWidget(this);
     QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
@@ -33,7 +30,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     urlLayout->addWidget(new QLabel("网页地址:"));
     urlInput = new QLineEdit();
     urlLayout->addWidget(urlInput);
-    
+
     urlLayout->addWidget(new QLabel("使用 Cookie:"));
     cookieBox = new QComboBox();
     cookieBox->addItems({"无", "firefox", "chrome", "edge", "safari"});
@@ -54,11 +51,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     resolutionBox = new QComboBox();
     resolutionBox->setMinimumWidth(180);
     downloadLayout->addWidget(resolutionBox);
-    
+
     downloadLayout->addWidget(new QLabel("文件名:"));
     nameInput = new QLineEdit("video.mp4");
     downloadLayout->addWidget(nameInput);
-    
+
     downloadBtn = new QPushButton("⬇️ 开始下载");
     downloadBtn->setEnabled(false);
     downloadLayout->addWidget(downloadBtn);
@@ -71,7 +68,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     logConsole = new QTextEdit();
     logConsole->setReadOnly(true);
-    logConsole->setStyleSheet("background-color: #1e1e1e; color: #d4d4d4; font-family: 'Menlo';");
+    logConsole->setStyleSheet(
+        "background-color: #1e1e1e; color: #d4d4d4; font-family: 'Menlo';");
     mainLayout->addWidget(logConsole);
 
     setCentralWidget(centralWidget);
@@ -81,16 +79,54 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     connect(analyzeBtn, &QPushButton::clicked, this, &MainWindow::onAnalyzeClicked);
     connect(downloadBtn, &QPushButton::clicked, this, &MainWindow::onDownloadClicked);
-    
-    connect(analyzeProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this, &MainWindow::handleAnalyzeFinished);
-    connect(analyzeProcess, &QProcess::errorOccurred, this, &MainWindow::handleProcessError);
-    
-    connect(downloadProcess, &QProcess::readyReadStandardOutput, this, &MainWindow::handleDownloadOutput);
-    connect(downloadProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this, &MainWindow::handleDownloadFinished);
-    connect(downloadProcess, &QProcess::errorOccurred, this, &MainWindow::handleProcessError);
+
+    connect(analyzeProcess,
+            QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, &MainWindow::handleAnalyzeFinished);
+    connect(analyzeProcess, &QProcess::errorOccurred,
+            this, &MainWindow::handleProcessError);
+
+    connect(downloadProcess, &QProcess::readyReadStandardOutput,
+            this, &MainWindow::handleDownloadOutput);
+    connect(downloadProcess,
+            QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this, &MainWindow::handleDownloadFinished);
+    connect(downloadProcess, &QProcess::errorOccurred,
+            this, &MainWindow::handleProcessError);
+
+    // 初始化工具管理器
+    setupToolManager();
 }
 
 MainWindow::~MainWindow() {}
+
+void MainWindow::setupToolManager() {
+    toolManager = new ToolManager(this);
+
+    connect(toolManager, &ToolManager::logMessage,
+            this, &MainWindow::logMessage);
+    connect(toolManager, &ToolManager::toolsReady, this, [this]() {
+        // 工具就绪后更新路径
+        ytdlpPath = toolManager->getYtdlpPath();
+        ffmpegPath = toolManager->getFfmpegPath();
+        analyzeBtn->setEnabled(true);
+        logMessage("🎉 所有组件已就绪，可以开始使用！");
+    });
+    connect(toolManager, &ToolManager::downloadError, this,
+            [this](const QString &toolName, const QString &error) {
+        logMessage(QString("❌ 下载 %1 失败: %2").arg(toolName, error));
+    });
+    connect(toolManager, &ToolManager::downloadProgress, this,
+            [this](const QString &toolName, int percent) {
+        progressBar->setValue(percent);
+    });
+
+    // 检查并下载缺失的工具
+    if (PlatformUtils::isWindows()) {
+        analyzeBtn->setEnabled(false);
+        toolManager->checkAndDownloadTools();
+    }
+}
 
 void MainWindow::logMessage(const QString &msg) {
     logConsole->append(msg);
@@ -117,19 +153,18 @@ void MainWindow::onAnalyzeClicked() {
 
     // --- 合集参数分流 ---
     if (playlistCheckBox->isChecked()) {
-        // 如果是合集，开启合集解析，并使用 flat-playlist 加快 JSON 返回速度
         args << "--yes-playlist" << "--flat-playlist";
     } else {
-        // 正常模式：拒绝合集，防止误下整个播放列表
         args << "--no-playlist";
     }
-    // -------------------------
 
     args << "-J" << currentUrl;
     analyzeProcess->start(ytdlpPath, args);
 }
 
 void MainWindow::handleAnalyzeFinished(int exitCode, QProcess::ExitStatus exitStatus) {
+    Q_UNUSED(exitStatus)
+
     analyzeBtn->setEnabled(true);
     if (exitCode != 0) {
         logMessage("❌ 解析失败。若解析B站，请确保浏览器已登录且在列表中选对浏览器。");
@@ -137,127 +172,142 @@ void MainWindow::handleAnalyzeFinished(int exitCode, QProcess::ExitStatus exitSt
         return;
     }
 
-    QByteArray jsonData = analyzeProcess->readAllStandardOutput();
-    QJsonDocument doc = QJsonDocument::fromJson(jsonData);
-    QJsonObject root = doc.object();
-    QString title = root["title"].toString();
+    try {
+        QByteArray jsonData = analyzeProcess->readAllStandardOutput();
+        QJsonDocument doc = QJsonDocument::fromJson(jsonData);
+        QJsonObject root = doc.object();
+        QString title = root["title"].toString();
 
-    // --- 处理合集模式的 UI 表现 ---
-    if (playlistCheckBox->isChecked()) {
-        logMessage("✅ 识别到合集/列表: " + title);
-        logMessage("⚠️ 合集模式下，将自动为您下载所有分P的最佳画质。");
-        
-        resolutionBox->clear();
-        formatMap.clear();
-        formatMap.insert("自动最佳合集画质", "bestvideo+bestaudio/best");
-        resolutionBox->addItem("自动最佳合集画质");
-        
-        // 改变文件名输入框，提醒用户合集会自动编号
-        nameInput->setText("合集自动编号下载");
-        nameInput->setEnabled(false); // 禁用输入框防止乱改导致覆盖
-        
-        downloadBtn->setEnabled(true);
-        return; // 提前结束，跳过后续的单集画质扫描
-    }
-    // ---------------------------------
-    
-    // 恢复输入框可用状态
-    nameInput->setEnabled(true);
-    logMessage("✅ 提取成功: " + title);
-    if (nameInput->text() == "video.mp4" || nameInput->text() == "合集自动编号下载") {
+        // --- 处理合集模式的 UI 表现 ---
+        if (playlistCheckBox->isChecked()) {
+            logMessage("✅ 识别到合集/列表: " + title);
+            logMessage("⚠️ 合集模式下，将自动为您下载所有分P的最佳画质。");
+
+            resolutionBox->clear();
+            formatMap.clear();
+            formatMap.insert("自动最佳合集画质", "bestvideo+bestaudio/best");
+            resolutionBox->addItem("自动最佳合集画质");
+
+            nameInput->setText("合集自动编号下载");
+            nameInput->setEnabled(false);
+
+            downloadBtn->setEnabled(true);
+            return;
+        }
+
+        // 恢复输入框可用状态
+        nameInput->setEnabled(true);
+        logMessage("✅ 提取成功: " + title);
         nameInput->setText(title + ".mp4");
-    } 
 
-    QJsonArray formats = root["formats"].toArray();
-    for (const QJsonValue &val : formats) {
-        QJsonObject fmt = val.toObject();
-        QString formatId = fmt["format_id"].toString();
-        QString ext = fmt["ext"].toString();
-        
-        // 鲁棒性提取：尝试 resolution -> height -> format_id
-        QString resStr = fmt["resolution"].toString();
-        if (resStr.isEmpty()) {
-            int h = fmt["height"].toInt(0);
-            resStr = (h > 0) ? QString::number(h) + "p" : "默认流 " + formatId;
+        QJsonArray formats = root["formats"].toArray();
+        for (const QJsonValue &val : formats) {
+            QJsonObject fmt = val.toObject();
+            QString formatId = fmt["format_id"].toString();
+            QString ext = fmt["ext"].toString();
+
+            QString resStr = fmt["resolution"].toString();
+            if (resStr.isEmpty()) {
+                int h = fmt["height"].toInt(0);
+                resStr = (h > 0) ? QString::number(h) + "p" : "默认流 " + formatId;
+            }
+
+            if (resStr == "audio only" || fmt["vcodec"].toString() == "none")
+                continue;
+
+            QString displayName = QString("%1 (%2)").arg(resStr, ext);
+            QString bestFormat = formatId;
+            if (fmt["acodec"].toString() == "none")
+                bestFormat += "+bestaudio/best";
+
+            if (!formatMap.contains(displayName)) {
+                formatMap.insert(displayName, bestFormat);
+                resolutionBox->addItem(displayName);
+            }
         }
 
-        // 屏蔽纯音频
-        if (resStr == "audio only" || fmt["vcodec"].toString() == "none") continue;
-
-        QString displayName = QString("%1 (%2)").arg(resStr).arg(ext);
-        QString bestFormat = formatId;
-        if (fmt["acodec"].toString() == "none") bestFormat += "+bestaudio/best";
-
-        if (!formatMap.contains(displayName)) {
-            formatMap.insert(displayName, bestFormat);
-            resolutionBox->addItem(displayName);
+        if (resolutionBox->count() > 0) {
+            formatMap.insert("自动最佳画质", "bestvideo+bestaudio/best");
+            resolutionBox->insertItem(0, "自动最佳画质");
+            resolutionBox->setCurrentIndex(0);
+            downloadBtn->setEnabled(true);
+            logMessage("✨ 请选择画质并开始下载。");
         }
-    }
-
-    if (resolutionBox->count() > 0) {
-        formatMap.insert("自动最佳画质", "bestvideo+bestaudio/best");
-        resolutionBox->insertItem(0, "自动最佳画质");
-        resolutionBox->setCurrentIndex(0);
-        downloadBtn->setEnabled(true);
-        logMessage("✨ 请选择画质并开始下载。");
+    } catch (const std::exception &e) {
+        logMessage(QString("❌ 解析数据时出错: %1").arg(e.what()));
+    } catch (...) {
+        logMessage("❌ 解析数据时发生未知错误");
     }
 }
 
 void MainWindow::onDownloadClicked() {
-    QString formatId = formatMap[resolutionBox->currentText()];
-    QString outName = nameInput->text();
-    
-    // 权限修复：强制使用系统的“下载”文件夹
-    QString downloadDir = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
-    downloadProcess->setWorkingDirectory(downloadDir);
+    try {
+        QString formatId = formatMap[resolutionBox->currentText()];
+        QString outName = nameInput->text();
 
-    logMessage("🚀 开始下载，保存至: " + downloadDir);
-    downloadBtn->setEnabled(false);
-    analyzeBtn->setEnabled(false);
-    progressBar->setValue(0);
+        if (outName.isEmpty()) {
+            logMessage("❌ 请输入文件名");
+            return;
+        }
 
-    QStringList args;
-    QString browser = cookieBox->currentText();
-    if (browser != "无") {
-        args << "--cookies-from-browser" << browser;
+        QString downloadDir = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+        downloadProcess->setWorkingDirectory(downloadDir);
+
+        logMessage("🚀 开始下载，保存至: " + downloadDir);
+        downloadBtn->setEnabled(false);
+        analyzeBtn->setEnabled(false);
+        progressBar->setValue(0);
+
+        QStringList args;
+        QString browser = cookieBox->currentText();
+        if (browser != "无") {
+            args << "--cookies-from-browser" << browser;
+        }
+
+        // 跨平台 ffmpeg 路径
+        if (!ffmpegPath.isEmpty() && QFile::exists(ffmpegPath)) {
+            args << "--ffmpeg-location" << ffmpegPath;
+        }
+
+        args << "-f" << formatId << "--merge-output-format" << "mp4" << "--newline";
+
+        if (playlistCheckBox->isChecked()) {
+            args << "--yes-playlist";
+            args << "-o" << "%(playlist_index)02d_%(title)s.%(ext)s";
+        } else {
+            args << "--no-playlist";
+            args << "-o" << outName;
+        }
+
+        args << currentUrl;
+        downloadProcess->start(ytdlpPath, args);
+    } catch (const std::exception &e) {
+        logMessage(QString("❌ 启动下载时出错: %1").arg(e.what()));
+        downloadBtn->setEnabled(true);
+        analyzeBtn->setEnabled(true);
+    } catch (...) {
+        logMessage("❌ 启动下载时发生未知错误");
+        downloadBtn->setEnabled(true);
+        analyzeBtn->setEnabled(true);
     }
-     // --- 新增：跨平台修复 ffmpeg 路径丢失问题 ---
-    #ifdef Q_OS_WIN
-      // Windows 端：自动获取当前 exe 所在目录，并寻找配套的 ffmpeg.exe
-      QString ffmpegPath = QCoreApplication::applicationDirPath() + "/ffmpeg.exe";
-      if (QFile::exists(ffmpegPath)) {
-        args << "--ffmpeg-location" << ffmpegPath;
-      }
-    #else
-      // macOS 端：强制指定 Homebrew 安装的 ffmpeg 路径
-      if (QFile::exists("/opt/homebrew/bin/ffmpeg")) {
-        args << "--ffmpeg-location" << "/opt/homebrew/bin/ffmpeg";
-      }
-    #endif
-    // ---------------------------------------------    
-    args << "-f" << formatId << "--merge-output-format" << "mp4" << "--newline" << "-o" << outName << currentUrl;
-    if (playlistCheckBox->isChecked()) {
-        args << "--yes-playlist";
-        args << "-o" << "%(playlist_index)02d_%(title)s.%(ext)s"; 
-    } else {
-        args << "--no-playlist";
-        args << "-o" << outName; 
-    }
-
-    args << currentUrl;
-    downloadProcess->start(ytdlpPath, args);
 }
 
 void MainWindow::handleDownloadOutput() {
-    QString output = QString::fromUtf8(downloadProcess->readAllStandardOutput());
-    QRegularExpression re("\\[download\\]\\s+([0-9.]+)\\%");
-    QRegularExpressionMatch match = re.match(output);
-    if (match.hasMatch()) {
-        progressBar->setValue(static_cast<int>(match.captured(1).toDouble()));
+    try {
+        QString output = QString::fromUtf8(downloadProcess->readAllStandardOutput());
+        QRegularExpression re("\\[download\\]\\s+([0-9.]+)\\%");
+        QRegularExpressionMatch match = re.match(output);
+        if (match.hasMatch()) {
+            progressBar->setValue(static_cast<int>(match.captured(1).toDouble()));
+        }
+    } catch (...) {
+        // 忽略输出解析错误
     }
 }
 
 void MainWindow::handleDownloadFinished(int exitCode, QProcess::ExitStatus exitStatus) {
+    Q_UNUSED(exitStatus)
+
     downloadBtn->setEnabled(true);
     analyzeBtn->setEnabled(true);
     if (exitCode == 0) {
@@ -269,6 +319,8 @@ void MainWindow::handleDownloadFinished(int exitCode, QProcess::ExitStatus exitS
 }
 
 void MainWindow::handleProcessError(QProcess::ProcessError error) {
+    Q_UNUSED(error)
     logMessage("❌ 引擎启动失败，请确保系统已安装 yt-dlp 和 ffmpeg。");
     analyzeBtn->setEnabled(true);
+    downloadBtn->setEnabled(true);
 }
