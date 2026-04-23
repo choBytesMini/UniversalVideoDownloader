@@ -1,2 +1,0 @@
-set(__QT_DEPLOY_TARGET_UniversalVideoDownloader_FILE /Users/chobits/Library/Mobile Documents/com~apple~CloudDocs/ffmpeg_project_cloud/M3u8Downloader/build/UniversalVideoDownloader.app/Contents/MacOS/UniversalVideoDownloader)
-set(__QT_DEPLOY_TARGET_UniversalVideoDownloader_TYPE EXECUTABLE)

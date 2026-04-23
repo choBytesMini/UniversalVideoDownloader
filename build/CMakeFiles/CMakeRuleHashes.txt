@@ -1,3 +1,0 @@
-# Hashes of file build rules.
-3fe1575f408368787f5475031026a892 CMakeFiles/UniversalVideoDownloader_autogen
-54191a96c85c2fd0971b6d0c05f8c9f4 UniversalVideoDownloader_autogen/timestamp
