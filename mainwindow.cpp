@@ -76,10 +76,17 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     downloadLayout->addWidget(stopBtn);
     mainLayout->addLayout(downloadLayout);
 
+    QHBoxLayout *progressLayout = new QHBoxLayout();
     progressBar = new QProgressBar();
     progressBar->setRange(0, 100);
     progressBar->setValue(0);
-    mainLayout->addWidget(progressBar);
+    progressLayout->addWidget(progressBar, 1);
+
+    statusLabel = new QLabel("");
+    statusLabel->setMinimumWidth(280);
+    statusLabel->setStyleSheet("color: #888; font-size: 12px;");
+    progressLayout->addWidget(statusLabel);
+    mainLayout->addLayout(progressLayout);
 
     logConsole = new QTextEdit();
     logConsole->setReadOnly(true);
@@ -185,6 +192,10 @@ void MainWindow::setDownloadUIEnabled(bool enabled) {
     downloadBtn->setEnabled(enabled);
     analyzeBtn->setEnabled(enabled);
     stopBtn->setEnabled(!enabled);
+    if (enabled) {
+        statusLabel->clear();
+        setWindowTitle("全能网页视频下载器 (支持 Cookie 绕过)");
+    }
 }
 
 // ============================================================
@@ -369,10 +380,12 @@ void MainWindow::startYtdlpDownload() {
         QString downloadDir = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
         downloadProcess->setWorkingDirectory(downloadDir);
 
-        logMessage("🚀 开始下载，保存至: " + downloadDir);
+        logMessage("🚀 开始下载: " + outName);
+        logMessage("📁 保存至: " + downloadDir);
         usingAria2c = false;
         setDownloadUIEnabled(false);
         progressBar->setValue(0);
+        statusLabel->setText("正在连接...");
 
         QStringList args;
         QString browser = cookieBox->currentText();
@@ -408,6 +421,28 @@ void MainWindow::startYtdlpDownload() {
 }
 
 // ============================================================
+// 进度详情更新（通用）
+// ============================================================
+void MainWindow::updateProgressDetail(int percent, const QString &size,
+                                       const QString &speed, const QString &eta) {
+    progressBar->setValue(percent);
+
+    // 构建状态文本: "42.3%  │  10.00MiB / 25.00MiB  │  2.50MiB/s  │  剩余 00:03"
+    QString detail = QString("%1%").arg(percent);
+    if (!size.isEmpty())
+        detail += "  │  " + size;
+    if (!speed.isEmpty())
+        detail += "  │  " + speed;
+    if (!eta.isEmpty() && eta != "Unknown")
+        detail += "  │  剩余 " + eta;
+
+    statusLabel->setText(detail);
+
+    // 窗口标题同步显示进度
+    setWindowTitle(QString("%1% - 全能网页视频下载器").arg(percent));
+}
+
+// ============================================================
 // aria2c 下载（磁力/BT，支持断点续传）
 // ============================================================
 void MainWindow::startAria2cDownload(const QString &url) {
@@ -419,11 +454,13 @@ void MainWindow::startAria2cDownload(const QString &url) {
     QString downloadDir = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
     aria2cProcess->setWorkingDirectory(downloadDir);
 
-    logMessage("🧲 启动 BT/磁力下载，保存至: " + downloadDir);
+    logMessage("🧲 启动 BT/磁力下载");
+    logMessage("📁 保存至: " + downloadDir);
     logMessage("⏳ 正在连接 DHT 网络，请耐心等待...");
     usingAria2c = true;
     setDownloadUIEnabled(false);
     progressBar->setValue(0);
+    statusLabel->setText("正在连接 DHT 网络...");
 
     QStringList args;
     args << "--continue=true";
@@ -442,22 +479,59 @@ void MainWindow::startAria2cDownload(const QString &url) {
     aria2cProcess->start(aria2cPath, args);
 }
 
+// ============================================================
+// aria2c 下载输出解析（详细进度）
+//
+// aria2c 输出格式示例：
+//   [#abc123 1.2MiB/3.4GiB(0%) CN:16 DL:2.5MiB ETA:30m]
+//   [#abc123 3.4GiB/3.4GiB(99%) CN:4 DL:1.2MiB ETA:5s]
+// ============================================================
 void MainWindow::handleAria2cOutput() {
     try {
         QString output = QString::fromUtf8(aria2cProcess->readAllStandardOutput());
+        QStringList lines = output.split('\n', Qt::SkipEmptyParts);
 
-        // 匹配 aria2c 进度：[#abc123 1.2MiB/3.4GiB(0%) CN:16 DL:2.5MiB ETA:30m]
-        QRegularExpression re("\\(([0-9.]+)%\\)");
-        QRegularExpressionMatch match = re.match(output);
-        if (match.hasMatch()) {
-            progressBar->setValue(static_cast<int>(match.captured(1).toDouble()));
-        }
+        for (const QString &line : lines) {
+            // 匹配百分比
+            QRegularExpression pctRe("\\(([0-9.]+)%\\)");
+            QRegularExpressionMatch pctMatch = pctRe.match(line);
+            if (!pctMatch.hasMatch())
+                continue;
 
-        // 提取下载速度信息
-        QRegularExpression speedRe("DL:([0-9.]+[KMG]?i?B/s)");
-        QRegularExpressionMatch speedMatch = speedRe.match(output);
-        if (speedMatch.hasMatch()) {
-            logMessage("⬇️ 下载速度: " + speedMatch.captured(1));
+            int percent = static_cast<int>(pctMatch.captured(1).toDouble());
+
+            // 匹配已下载/总大小 (如 "1.2MiB/3.4GiB")
+            QRegularExpression sizeRe("([0-9.]+\\s*[KMG]?i?B)/([0-9.]+\\s*[KMG]?i?B)");
+            QRegularExpressionMatch sizeMatch = sizeRe.match(line);
+            QString sizeStr;
+            if (sizeMatch.hasMatch()) {
+                sizeStr = sizeMatch.captured(1) + " / " + sizeMatch.captured(2);
+            }
+
+            // 匹配下载速度 (如 "DL:2.5MiB")
+            QRegularExpression speedRe("DL:([0-9.]+\\s*[KMG]?i?B)");
+            QRegularExpressionMatch speedMatch = speedRe.match(line);
+            QString speedStr;
+            if (speedMatch.hasMatch()) {
+                speedStr = speedMatch.captured(1) + "/s";
+            }
+
+            // 匹配 ETA (如 "ETA:30m" 或 "ETA:5s")
+            QRegularExpression etaRe("ETA:([0-9hms]+)");
+            QRegularExpressionMatch etaMatch = etaRe.match(line);
+            QString etaStr;
+            if (etaMatch.hasMatch()) {
+                etaStr = etaMatch.captured(1);
+            }
+
+            // 匹配连接数 (如 "CN:16")
+            QRegularExpression cnRe("CN:(\\d+)");
+            QRegularExpressionMatch cnMatch = cnRe.match(line);
+            if (cnMatch.hasMatch()) {
+                sizeStr += "  │  连接: " + cnMatch.captured(1);
+            }
+
+            updateProgressDetail(percent, sizeStr, speedStr, etaStr);
         }
     } catch (...) {
         // 忽略输出解析错误
@@ -468,7 +542,7 @@ void MainWindow::handleAria2cFinished(int exitCode, QProcess::ExitStatus exitSta
     Q_UNUSED(exitStatus)
 
     if (exitCode == 0) {
-        progressBar->setValue(100);
+        updateProgressDetail(100, "", "", "已完成");
         logMessage("🎉 BT/磁力下载完成！");
         retryCount = 0;
     } else {
@@ -476,6 +550,7 @@ void MainWindow::handleAria2cFinished(int exitCode, QProcess::ExitStatus exitSta
             retryCount++;
             logMessage(QString("⚠️ 下载中断，%1 秒后进行第 %2/%3 次重试...")
                            .arg(3).arg(retryCount).arg(MAX_RETRIES));
+            statusLabel->setText(QString("网络中断，%1 秒后重试...").arg(3));
             QTimer::singleShot(3000, this, &MainWindow::retryDownload);
             return;
         }
@@ -486,15 +561,63 @@ void MainWindow::handleAria2cFinished(int exitCode, QProcess::ExitStatus exitSta
 }
 
 // ============================================================
-// yt-dlp 下载输出解析
+// yt-dlp 下载输出解析（详细进度）
+//
+// yt-dlp --newline 输出格式示例：
+//   [download]   0.0% of    1.50MiB at  Unknown B/s ETA Unknown
+//   [download]  42.3% of    1.50MiB at    2.50MiB/s ETA 00:03
+//   [download] 100% of    1.50MiB in 00:04
 // ============================================================
 void MainWindow::handleDownloadOutput() {
     try {
         QString output = QString::fromUtf8(downloadProcess->readAllStandardOutput());
-        QRegularExpression re("\\[download\\]\\s+([0-9.]+)\\%");
-        QRegularExpressionMatch match = re.match(output);
-        if (match.hasMatch()) {
-            progressBar->setValue(static_cast<int>(match.captured(1).toDouble()));
+        QStringList lines = output.split('\n', Qt::SkipEmptyParts);
+
+        for (const QString &line : lines) {
+            if (!line.contains("[download]"))
+                continue;
+
+            // 匹配百分比
+            QRegularExpression pctRe("\\[download\\]\\s+([0-9.]+)%");
+            QRegularExpressionMatch pctMatch = pctRe.match(line);
+            if (!pctMatch.hasMatch())
+                continue;
+
+            int percent = static_cast<int>(pctMatch.captured(1).toDouble());
+
+            // 匹配已下载 / 总大小  (如 "of   10.00MiB")
+            QRegularExpression sizeRe("of\\s+([0-9.]+\\s*[KMG]?iB)");
+            QRegularExpressionMatch sizeMatch = sizeRe.match(line);
+            QString sizeStr;
+            if (sizeMatch.hasMatch()) {
+                sizeStr = sizeMatch.captured(1).trimmed();
+            }
+
+            // 匹配速度 (如 "at  2.50MiB/s")
+            QRegularExpression speedRe("at\\s+([0-9.]+\\s*[KMG]?iB/s)");
+            QRegularExpressionMatch speedMatch = speedRe.match(line);
+            QString speedStr;
+            if (speedMatch.hasMatch()) {
+                speedStr = speedMatch.captured(1).trimmed();
+            }
+
+            // 匹配 ETA (如 "ETA 00:03")
+            QRegularExpression etaRe("ETA\\s+([0-9:]+|Unknown)");
+            QRegularExpressionMatch etaMatch = etaRe.match(line);
+            QString etaStr;
+            if (etaMatch.hasMatch()) {
+                etaStr = etaMatch.captured(1);
+            }
+
+            // 完成状态：匹配 "in 00:04"
+            QRegularExpression doneRe("in\\s+([0-9:]+)$");
+            QRegularExpressionMatch doneMatch = doneRe.match(line);
+            if (doneMatch.hasMatch()) {
+                etaStr = "已完成";
+                speedStr = "";
+            }
+
+            updateProgressDetail(percent, sizeStr, speedStr, etaStr);
         }
     } catch (...) {
         // 忽略输出解析错误
@@ -505,7 +628,7 @@ void MainWindow::handleDownloadFinished(int exitCode, QProcess::ExitStatus exitS
     Q_UNUSED(exitStatus)
 
     if (exitCode == 0) {
-        progressBar->setValue(100);
+        updateProgressDetail(100, "", "", "已完成");
         logMessage("🎉 下载任务圆满完成！");
         retryCount = 0;
     } else {
@@ -513,6 +636,7 @@ void MainWindow::handleDownloadFinished(int exitCode, QProcess::ExitStatus exitS
             retryCount++;
             logMessage(QString("⚠️ 下载中断，%1 秒后进行第 %2/%3 次重试（支持断点续传）...")
                            .arg(3).arg(retryCount).arg(MAX_RETRIES));
+            statusLabel->setText(QString("网络中断，%1 秒后重试...").arg(3));
             QTimer::singleShot(3000, this, &MainWindow::retryDownload);
             return;
         }

@@ -11,6 +11,8 @@
 #include <QMap>
 #include <QCheckBox>
 
+class QLabel;
+
 class ToolManager;
 class UrlExtractor;
 
@@ -54,6 +56,7 @@ private:
     QCheckBox *autoExtractCheckBox;
     QTextEdit *logConsole;
     QProgressBar *progressBar;
+    QLabel *statusLabel;  // 下载详情：速度/已下载/剩余时间
 
     // QProcess 实例
     QProcess *analyzeProcess;
@@ -83,6 +86,8 @@ private:
     void retryDownload();
     void setDownloadUIEnabled(bool enabled);
     bool isMagnetOrTorrent(const QString &url) const;
+    void updateProgressDetail(int percent, const QString &size,
+                              const QString &speed, const QString &eta);
 };
 
 #endif // MAINWINDOW_H
