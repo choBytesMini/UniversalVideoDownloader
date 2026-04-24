@@ -17,7 +17,7 @@ private slots:
     void onFetchFinished(QNetworkReply *reply);
 
 signals:
-    void urlFound(const QString &extractedUrl);
+    void urlsFound(const QStringList &extractedUrls);
     void noUrlFound(const QString &pageUrl);
     void errorOccurred(const QString &errorMsg);
 

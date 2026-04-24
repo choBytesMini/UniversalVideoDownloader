@@ -17,11 +17,16 @@ QString PlatformUtils::findYtdlpPath() {
     }
     return QString(); // 未找到
 #elif defined(Q_OS_MACOS)
-    // macOS: 优先查找 Homebrew 安装路径
-    QString homebrewPath = "/opt/homebrew/bin/yt-dlp";
-    if (QFile::exists(homebrewPath)) {
-        return homebrewPath;
+    QString localPath = getAppDir() + "/yt-dlp";
+    if (QFile::exists(localPath)) return localPath;
+
+    QStringList macPaths = {"/opt/homebrew/bin/yt-dlp", "/usr/local/bin/yt-dlp", "/opt/local/bin/yt-dlp"};
+    for (const QString& p : macPaths) {
+        if (QFile::exists(p)) return p;
     }
+    QString pathExe = QStandardPaths::findExecutable("yt-dlp");
+    if (!pathExe.isEmpty()) return pathExe;
+    
     return "yt-dlp"; // 回退到系统 PATH
 #else
     return "yt-dlp";
@@ -42,11 +47,16 @@ QString PlatformUtils::findFfmpegPath() {
     }
     return QString(); // 未找到
 #elif defined(Q_OS_MACOS)
-    // macOS: 优先查找 Homebrew 安装路径
-    QString homebrewPath = "/opt/homebrew/bin/ffmpeg";
-    if (QFile::exists(homebrewPath)) {
-        return homebrewPath;
+    QString localPath = getAppDir() + "/ffmpeg";
+    if (QFile::exists(localPath)) return localPath;
+
+    QStringList macPaths = {"/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/opt/local/bin/ffmpeg"};
+    for (const QString& p : macPaths) {
+        if (QFile::exists(p)) return p;
     }
+    QString pathExe = QStandardPaths::findExecutable("ffmpeg");
+    if (!pathExe.isEmpty()) return pathExe;
+    
     return QString(); // 未找到
 #else
     return QString();
@@ -67,11 +77,16 @@ QString PlatformUtils::findAria2cPath() {
     }
     return QString(); // 未找到
 #elif defined(Q_OS_MACOS)
-    // macOS: 优先查找 Homebrew 安装路径
-    QString homebrewPath = "/opt/homebrew/bin/aria2c";
-    if (QFile::exists(homebrewPath)) {
-        return homebrewPath;
+    QString localPath = getAppDir() + "/aria2c";
+    if (QFile::exists(localPath)) return localPath;
+
+    QStringList macPaths = {"/opt/homebrew/bin/aria2c", "/usr/local/bin/aria2c", "/opt/local/bin/aria2c"};
+    for (const QString& p : macPaths) {
+        if (QFile::exists(p)) return p;
     }
+    QString pathExe = QStandardPaths::findExecutable("aria2c");
+    if (!pathExe.isEmpty()) return pathExe;
+    
     return "aria2c"; // 回退到系统 PATH
 #else
     return "aria2c";

@@ -14,6 +14,8 @@ add_executable(UniversalVideoDownloader
     mainwindow.h
     cli_runner.cpp
     cli_runner.h
+    download_utils.cpp
+    download_utils.h
     platformutils.cpp
     platformutils.h
     toolmanager.cpp

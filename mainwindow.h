@@ -39,9 +39,12 @@ private slots:
     void handleAria2cFinished(int exitCode, QProcess::ExitStatus exitStatus);
 
     // URL 自动解析回调
-    void onUrlExtracted(const QString &extractedUrl);
+    void onUrlsExtracted(const QStringList &extractedUrls);
     void onUrlExtractFailed(const QString &pageUrl);
     void onUrlExtractError(const QString &errorMsg);
+
+private slots:
+    void onVideoSelectionChanged(int index);
 
 private:
     // UI 控件
@@ -50,6 +53,8 @@ private:
     QPushButton *analyzeBtn;
     QPushButton *downloadBtn;
     QPushButton *stopBtn;
+    QLabel *videoLabel;
+    QComboBox *videoBox;
     QComboBox *resolutionBox;
     QComboBox *cookieBox;
     QCheckBox *playlistCheckBox;
@@ -65,6 +70,7 @@ private:
 
     // 状态
     QMap<QString, QString> formatMap;
+    QMap<QString, QString> videoMap;
     QString currentUrl;
     QString ytdlpPath;
     QString ffmpegPath;
@@ -85,7 +91,6 @@ private:
     void startAria2cDownload(const QString &url);
     void retryDownload();
     void setDownloadUIEnabled(bool enabled);
-    bool isMagnetOrTorrent(const QString &url) const;
     void updateProgressDetail(int percent, const QString &size,
                               const QString &speed, const QString &eta);
 };

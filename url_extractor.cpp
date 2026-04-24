@@ -92,16 +92,10 @@ static QString unescapeJsonString(const QString &escaped) {
 // 匹配形如 "key":"value" 或 "key": "value"，其中 value 含目标后缀
 // 同时处理转义形式（\/ 代替 /）
 // ============================================================
-static QString findQuotedUrlBySuffix(const QString &html,
+static QStringList findQuotedUrlsBySuffix(const QString &html,
                                      const QString &suffix,
                                      bool unescape) {
-    // 匹配 "key":"value" 或 "key": "value"
-    // key 可以是 url, file, src, hlsUrl, videoUrl 等
-    // value 中包含 .m3u8 / .mpd / .mp4 等后缀
-    // 注意：value 中可能包含 \/ 转义
-
-    // 构造正则：匹配引号内含后缀的字符串
-    // 使用 [\w]* 后缀 来匹配（后缀含 . 需转义）
+    QStringList results;
     QString escapedSuffix;
     for (const QChar &c : suffix) {
         if (c == '.') {
@@ -111,8 +105,6 @@ static QString findQuotedUrlBySuffix(const QString &html,
         }
     }
 
-    // 模式：在引号之间找含后缀的 URL（允许 \/ 转义）
-    // [^"]* 后缀 [^"]* 匹配 value 内容
     QString pattern = "\"(?:url|file|src|hlsUrl|playUrl|videoUrl|stream_url|manifest_url|dashUrl)\""
                       "\\s*:\\s*\"([^\"]*" + escapedSuffix + "[^\"]*)\"";
     QRegularExpression re(pattern, QRegularExpression::CaseInsensitiveOption);
@@ -121,10 +113,10 @@ static QString findQuotedUrlBySuffix(const QString &html,
         QString raw = it.next().captured(1);
         QString clean = unescape ? unescapeJsonString(raw) : raw;
         if (clean.startsWith("http")) {
-            return clean;
+            results.append(clean);
         }
     }
-    return {};
+    return results;
 }
 
 // ============================================================
@@ -135,25 +127,17 @@ static QString findQuotedUrlBySuffix(const QString &html,
 // 2. 普通裸 URL（如 https://...m3u8?token=xxx）
 // 3. HTML 标签中的 src 属性（<video>/<source>）
 // ============================================================
-static QString extractMediaUrl(const QString &html) {
+static QStringList extractMediaUrls(const QString &html) {
+    QStringList urls;
+
     // ---- 第 1 层：匹配 JS/JSON 中转义的 m3u8 ----
-    // 典型形如: "url":"https:\/\/xxx.com\/path\/index.m3u8?token=abc"
-    {
-        QString found = findQuotedUrlBySuffix(html, ".m3u8", true);
-        if (!found.isEmpty()) return found;
-    }
+    urls.append(findQuotedUrlsBySuffix(html, ".m3u8", true));
 
     // ---- 第 2 层：匹配 JS/JSON 中转义的 mpd ----
-    {
-        QString found = findQuotedUrlBySuffix(html, ".mpd", true);
-        if (!found.isEmpty()) return found;
-    }
+    urls.append(findQuotedUrlsBySuffix(html, ".mpd", true));
 
     // ---- 第 3 层：匹配 JS/JSON 中转义的 mp4 ----
-    {
-        QString found = findQuotedUrlBySuffix(html, ".mp4", true);
-        if (!found.isEmpty()) return found;
-    }
+    urls.append(findQuotedUrlsBySuffix(html, ".mp4", true));
 
     // ---- 第 4 层：裸 URL（未转义），直接出现在 HTML/JS 文本中 ----
     // m3u8
@@ -161,7 +145,7 @@ static QString extractMediaUrl(const QString &html) {
         QRegularExpression re("https?://[^\\s\"'<>]+\\.m3u8[^\\s\"'<>]*",
                               QRegularExpression::CaseInsensitiveOption);
         QRegularExpressionMatchIterator it = re.globalMatch(html);
-        if (it.hasNext()) return it.next().captured();
+        while (it.hasNext()) urls.append(it.next().captured());
     }
 
     // mpd
@@ -169,7 +153,7 @@ static QString extractMediaUrl(const QString &html) {
         QRegularExpression re("https?://[^\\s\"'<>]+\\.mpd[^\\s\"'<>]*",
                               QRegularExpression::CaseInsensitiveOption);
         QRegularExpressionMatchIterator it = re.globalMatch(html);
-        if (it.hasNext()) return it.next().captured();
+        while (it.hasNext()) urls.append(it.next().captured());
     }
 
     // mp4 / webm / flv
@@ -177,18 +161,19 @@ static QString extractMediaUrl(const QString &html) {
         QRegularExpression re("https?://[^\\s\"'<>]+\\.(?:mp4|webm|flv|mkv)(?:\\?[^\\s\"'<>]*)?",
                               QRegularExpression::CaseInsensitiveOption);
         QRegularExpressionMatchIterator it = re.globalMatch(html);
-        if (it.hasNext()) return it.next().captured();
+        while (it.hasNext()) urls.append(it.next().captured());
     }
 
     // ---- 第 5 层：HTML 标签 src 属性 ----
     {
         QRegularExpression re("<(?:video|source)[^>]+src\\s*=\\s*[\"']([^\"']+)[\"']",
                               QRegularExpression::CaseInsensitiveOption);
-        QRegularExpressionMatch m = re.match(html);
-        if (m.hasMatch()) return m.captured(1);
+        QRegularExpressionMatchIterator it = re.globalMatch(html);
+        while (it.hasNext()) urls.append(it.next().captured(1));
     }
 
-    return {};
+    urls.removeDuplicates();
+    return urls;
 }
 
 void UrlExtractor::onFetchFinished(QNetworkReply *reply) {
@@ -209,9 +194,9 @@ void UrlExtractor::onFetchFinished(QNetworkReply *reply) {
         return;
     }
 
-    QString found = extractMediaUrl(html);
-    if (!found.isEmpty()) {
-        emit urlFound(found);
+    QStringList foundUrls = extractMediaUrls(html);
+    if (!foundUrls.isEmpty()) {
+        emit urlsFound(foundUrls);
     } else {
         emit noUrlFound(pageUrl);
     }

@@ -1,4 +1,5 @@
 #include "cli_runner.h"
+#include "download_utils.h"
 #include "platformutils.h"
 #include <QCoreApplication>
 #include <QDir>
@@ -6,8 +7,6 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QRegularExpression>
-#include <QStandardPaths>
 #include <QTimer>
 #include <cstdio>
 
@@ -21,11 +20,6 @@ const char *CliRunner::CYAN  = "\033[36m";
 const char *CliRunner::DIM   = "\033[2m";
 
 CliRunner::CliRunner(QObject *parent) : QObject(parent), process(nullptr) {}
-
-bool CliRunner::isMagnetOrTorrent(const QString &url) const {
-    return url.startsWith("magnet:", Qt::CaseInsensitive)
-        || url.endsWith(".torrent", Qt::CaseInsensitive);
-}
 
 void CliRunner::printHeader() {
     printf("\n");
@@ -98,7 +92,7 @@ int CliRunner::run(int argc, char *argv[]) {
 
     // 解析参数
     currentUrl.clear();
-    outputDir = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    outputDir = DownloadUtils::defaultDownloadDir();
     cookieBrowser.clear();
     isMagnet = false;
     verbose = false;
@@ -132,7 +126,7 @@ int CliRunner::run(int argc, char *argv[]) {
     ytdlpPath = PlatformUtils::findYtdlpPath();
     ffmpegPath = PlatformUtils::findFfmpegPath();
     aria2cPath = PlatformUtils::findAria2cPath();
-    isMagnet = isMagnetOrTorrent(currentUrl);
+    isMagnet = DownloadUtils::isMagnetOrTorrent(currentUrl);
 
     printHeader();
 
@@ -181,20 +175,7 @@ void CliRunner::startDownload() {
 
         printf("%s⏳ 正在连接 DHT 网络...%s\n", YELLOW, RESET);
 
-        QStringList args;
-        args << "--continue=true"
-             << "--max-connection-per-server=16"
-             << "--split=16"
-             << "--min-split-size=1M"
-             << "--enable-dht=true"
-             << "--enable-peer-exchange=true"
-             << "--seed-time=0"
-             << "--auto-file-allocation=none"
-             << "--console-log-level=notice"
-             << "--summary-interval=1"
-             << "--dir" << outputDir
-             << currentUrl;
-
+        QStringList args = DownloadUtils::buildAria2cArgs(outputDir, currentUrl);
         process->start(aria2cPath, args);
     } else {
         // yt-dlp 模式 — 先解析再下载
@@ -203,9 +184,7 @@ void CliRunner::startDownload() {
         // 第一步：用 -J 获取视频信息
         QProcess *analyzeProc = new QProcess(this);
         QStringList analyzeArgs;
-        if (!cookieBrowser.isEmpty() && cookieBrowser != "无") {
-            analyzeArgs << "--cookies-from-browser" << cookieBrowser;
-        }
+        analyzeArgs.append(DownloadUtils::buildCookieArgs(cookieBrowser));
         analyzeArgs << "--no-playlist" << "-J" << currentUrl;
 
         connect(analyzeProc,
@@ -256,9 +235,7 @@ void CliRunner::startDownload() {
             printf("%s🚀 开始下载:%s %s\n", GREEN, RESET, outName.toUtf8().constData());
 
             QStringList dlArgs;
-            if (!cookieBrowser.isEmpty() && cookieBrowser != "无") {
-                dlArgs << "--cookies-from-browser" << cookieBrowser;
-            }
+            dlArgs.append(DownloadUtils::buildCookieArgs(cookieBrowser));
             if (!ffmpegPath.isEmpty() && QFile::exists(ffmpegPath)) {
                 dlArgs << "--ffmpeg-location" << ffmpegPath;
             }
@@ -288,41 +265,18 @@ void CliRunner::onProcessReadyRead() {
     // yt-dlp 进度行以 [download] 开头
     QStringList lines = output.split('\n', Qt::SkipEmptyParts);
     for (const QString &line : lines) {
-        if (line.contains("[download]")) {
-            // 提取百分比和速度信息
-            QRegularExpression pctRe("([0-9.]+)%");
-            QRegularExpressionMatch pctMatch = pctRe.match(line);
+        DownloadProgress p = DownloadProgressParser::parseYtdlpLine(line);
+        if (p.valid) {
+            QString progressLine = QString("%1⬇ %2%%%3")
+                .arg(GREEN).arg(p.percent).arg(RESET);
+            if (!p.size.isEmpty())
+                progressLine += QString("  %1").arg(p.size);
+            if (!p.speed.isEmpty())
+                progressLine += QString("  %1%2/s%3").arg(CYAN, p.speed, RESET);
+            if (!p.eta.isEmpty() && p.eta != "Unknown")
+                progressLine += QString("  ETA %1").arg(p.eta);
 
-            if (pctMatch.hasMatch()) {
-                QString pct = pctMatch.captured(1);
-
-                // 提取速度
-                QRegularExpression speedRe("at\\s+([0-9.]+\\s*[KMG]?iB/s)");
-                QRegularExpressionMatch speedMatch = speedRe.match(line);
-                QString speed = speedMatch.hasMatch() ? speedMatch.captured(1) : "";
-
-                // 提取 ETA
-                QRegularExpression etaRe("ETA\\s+([0-9:]+)");
-                QRegularExpressionMatch etaMatch = etaRe.match(line);
-                QString eta = etaMatch.hasMatch() ? etaMatch.captured(1) : "";
-
-                // 提取大小
-                QRegularExpression sizeRe("of\\s+([0-9.]+\\s*[KMG]?iB)");
-                QRegularExpressionMatch sizeMatch = sizeRe.match(line);
-                QString size = sizeMatch.hasMatch() ? sizeMatch.captured(1) : "";
-
-                // 构建进度行
-                QString progressLine = QString("%s⬇ %s%%%s")
-                    .arg(GREEN, pct, RESET);
-                if (!size.isEmpty())
-                    progressLine += QString("  %s").arg(size);
-                if (!speed.isEmpty())
-                    progressLine += QString("  %s%s/s%s").arg(CYAN, speed, RESET);
-                if (!eta.isEmpty())
-                    progressLine += QString("  ETA %s").arg(eta);
-
-                printProgress(progressLine);
-            }
+            printProgress(progressLine);
         } else if (line.contains("[Merger]") || line.contains("[ExtractAudio]")) {
             // 合并/提取音频
             printf("\r\033[K%s⏳ %s%s\n", YELLOW, line.trimmed().toUtf8().constData(), RESET);
@@ -333,32 +287,16 @@ void CliRunner::onProcessReadyRead() {
 
     // aria2c 进度包含 (XX%)
     if (output.contains("(%)") || output.contains("%)")) {
-        QRegularExpression pctRe("\\(([0-9.]+)%\\)");
-        QRegularExpressionMatch pctMatch = pctRe.match(output);
-        if (pctMatch.hasMatch()) {
-            QString pct = pctMatch.captured(1);
-
-            QRegularExpression sizeRe("([0-9.]+\\s*[KMG]?i?B)/([0-9.]+\\s*[KMG]?i?B)");
-            QRegularExpressionMatch sizeMatch = sizeRe.match(output);
-            QString size = sizeMatch.hasMatch()
-                ? sizeMatch.captured(1) + "/" + sizeMatch.captured(2) : "";
-
-            QRegularExpression speedRe("DL:([0-9.]+\\s*[KMG]?i?B)");
-            QRegularExpressionMatch speedMatch = speedRe.match(output);
-            QString speed = speedMatch.hasMatch() ? speedMatch.captured(1) + "/s" : "";
-
-            QRegularExpression etaRe("ETA:([0-9hms]+)");
-            QRegularExpressionMatch etaMatch = etaRe.match(output);
-            QString eta = etaMatch.hasMatch() ? etaMatch.captured(1) : "";
-
-            QString progressLine = QString("%s🧲 %s%%%s")
-                .arg(GREEN, pct, RESET);
-            if (!size.isEmpty())
-                progressLine += QString("  %s").arg(size);
-            if (!speed.isEmpty())
-                progressLine += QString("  %s%s%s").arg(CYAN, speed, RESET);
-            if (!eta.isEmpty())
-                progressLine += QString("  ETA %s").arg(eta);
+        DownloadProgress p = DownloadProgressParser::parseAria2cLine(output);
+        if (p.valid) {
+            QString progressLine = QString("%1🧲 %2%%%3")
+                .arg(GREEN).arg(p.percent).arg(RESET);
+            if (!p.size.isEmpty())
+                progressLine += QString("  %1").arg(p.size);
+            if (!p.speed.isEmpty())
+                progressLine += QString("  %1%2%3").arg(CYAN, p.speed, RESET);
+            if (!p.eta.isEmpty())
+                progressLine += QString("  ETA %1").arg(p.eta);
 
             printProgress(progressLine);
         }

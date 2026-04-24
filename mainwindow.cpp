@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include "download_utils.h"
 #include "platformutils.h"
 #include "toolmanager.h"
 #include "url_extractor.h"
@@ -11,8 +12,6 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QMessageBox>
-#include <QRegularExpression>
-#include <QStandardPaths>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -55,8 +54,17 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     urlLayout->addWidget(analyzeBtn);
     mainLayout->addLayout(urlLayout);
 
-    // 第二行：画质选择、文件名、下载按钮、停止按钮
+    // 第二行：视频选择（如果有多视频/合集）、画质选择、文件名、下载按钮、停止按钮
     QHBoxLayout *downloadLayout = new QHBoxLayout();
+    
+    videoLabel = new QLabel("选择视频:");
+    videoBox = new QComboBox();
+    videoBox->setMinimumWidth(150);
+    downloadLayout->addWidget(videoLabel);
+    downloadLayout->addWidget(videoBox);
+    videoLabel->hide();
+    videoBox->hide();
+
     downloadLayout->addWidget(new QLabel("选择画质:"));
     resolutionBox = new QComboBox();
     resolutionBox->setMinimumWidth(180);
@@ -106,6 +114,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(downloadBtn, &QPushButton::clicked, this, &MainWindow::onDownloadClicked);
     connect(stopBtn, &QPushButton::clicked, this, &MainWindow::onStopClicked);
 
+    connect(videoBox, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &MainWindow::onVideoSelectionChanged);
+
     // 信号连接：yt-dlp 解析进程
     connect(analyzeProcess,
             QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
@@ -136,8 +147,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     // 初始化 URL 提取器
     urlExtractor = new UrlExtractor(this);
-    connect(urlExtractor, &UrlExtractor::urlFound,
-            this, &MainWindow::onUrlExtracted);
+    connect(urlExtractor, &UrlExtractor::urlsFound,
+            this, &MainWindow::onUrlsExtracted);
     connect(urlExtractor, &UrlExtractor::noUrlFound,
             this, &MainWindow::onUrlExtractFailed);
     connect(urlExtractor, &UrlExtractor::errorOccurred,
@@ -178,14 +189,6 @@ void MainWindow::logMessage(const QString &msg) {
 }
 
 // ============================================================
-// URL 类型判断
-// ============================================================
-bool MainWindow::isMagnetOrTorrent(const QString &url) const {
-    return url.startsWith("magnet:", Qt::CaseInsensitive)
-        || url.endsWith(".torrent", Qt::CaseInsensitive);
-}
-
-// ============================================================
 // UI 状态控制
 // ============================================================
 void MainWindow::setDownloadUIEnabled(bool enabled) {
@@ -212,9 +215,13 @@ void MainWindow::onAnalyzeClicked() {
     downloadBtn->setEnabled(false);
     resolutionBox->clear();
     formatMap.clear();
+    videoBox->clear();
+    videoMap.clear();
+    videoLabel->hide();
+    videoBox->hide();
 
     // magnet / torrent 链接无需解析，直接启用下载按钮
-    if (isMagnetOrTorrent(currentUrl)) {
+    if (DownloadUtils::isMagnetOrTorrent(currentUrl)) {
         logMessage("🔗 检测到磁力/种子链接，可直接下载");
         formatMap.insert("BT 直接下载", "bt");
         resolutionBox->addItem("BT 直接下载");
@@ -237,9 +244,35 @@ void MainWindow::onAnalyzeClicked() {
     startYtdlpAnalyze();
 }
 
-void MainWindow::onUrlExtracted(const QString &extractedUrl) {
-    logMessage("✅ 自动解析成功: " + extractedUrl);
-    currentUrl = extractedUrl;
+void MainWindow::onUrlsExtracted(const QStringList &extractedUrls) {
+    if (extractedUrls.isEmpty()) return;
+    
+    if (extractedUrls.size() == 1) {
+        logMessage("✅ 自动解析成功: " + extractedUrls.first());
+        currentUrl = extractedUrls.first();
+    } else {
+        logMessage(QString("✅ 自动解析发现 %1 个视频，已默认选中第一个。").arg(extractedUrls.size()));
+        
+        // 阻塞信号，避免触发 onVideoSelectionChanged
+        bool oldState = videoBox->blockSignals(true);
+        videoBox->clear();
+        videoMap.clear();
+        
+        for (int i = 0; i < extractedUrls.size(); ++i) {
+            QString name = QString("提取视频 %1").arg(i + 1);
+            videoBox->addItem(name);
+            videoMap.insert(name, extractedUrls.at(i));
+        }
+        
+        videoBox->setCurrentIndex(0);
+        videoBox->blockSignals(oldState);
+        
+        videoLabel->show();
+        videoBox->show();
+        
+        currentUrl = extractedUrls.first();
+    }
+    
     logMessage("⏳ 正在使用 yt-dlp 获取视频详情...");
     startYtdlpAnalyze();
 }
@@ -257,12 +290,43 @@ void MainWindow::onUrlExtractError(const QString &errorMsg) {
     startYtdlpAnalyze();
 }
 
+void MainWindow::onVideoSelectionChanged(int index) {
+    if (index < 0 || videoBox->itemText(index).isEmpty()) return;
+    
+    QString selectedName = videoBox->itemText(index);
+    if (!videoMap.contains(selectedName)) return;
+
+    if (selectedName == "全集合并下载/自动编号") {
+        currentUrl = videoMap[selectedName];
+        playlistCheckBox->setChecked(true);
+        resolutionBox->clear();
+        formatMap.clear();
+        formatMap.insert("自动最佳合集画质", "bestvideo+bestaudio/best");
+        resolutionBox->addItem("自动最佳合集画质");
+        nameInput->setText("合集自动编号下载");
+        nameInput->setEnabled(false);
+        downloadBtn->setEnabled(true);
+        return;
+    }
+
+    currentUrl = videoMap[selectedName];
+    logMessage(QString("👉 已选择视频: %1").arg(selectedName));
+    
+    // 取消合集模式，重新解析该单集
+    playlistCheckBox->setChecked(false);
+    
+    analyzeBtn->setEnabled(false);
+    downloadBtn->setEnabled(false);
+    resolutionBox->clear();
+    formatMap.clear();
+    
+    logMessage("⏳ 正在获取选中视频的详细信息...");
+    startYtdlpAnalyze();
+}
+
 void MainWindow::startYtdlpAnalyze() {
     QStringList args;
-    QString browser = cookieBox->currentText();
-    if (browser != "无") {
-        args << "--cookies-from-browser" << browser;
-    }
+    args.append(DownloadUtils::buildCookieArgs(cookieBox->currentText()));
 
     if (playlistCheckBox->isChecked()) {
         args << "--yes-playlist" << "--flat-playlist";
@@ -292,6 +356,36 @@ void MainWindow::handleAnalyzeFinished(int exitCode, QProcess::ExitStatus exitSt
 
         if (playlistCheckBox->isChecked()) {
             logMessage("✅ 识别到合集/列表: " + title);
+
+            if (root.contains("entries")) {
+                bool oldState = videoBox->blockSignals(true);
+                videoBox->clear();
+                videoMap.clear();
+
+                videoBox->addItem("全集合并下载/自动编号");
+                videoMap.insert("全集合并下载/自动编号", currentUrl);
+
+                QJsonArray entries = root["entries"].toArray();
+                for (int i = 0; i < entries.size(); ++i) {
+                    QJsonObject entry = entries[i].toObject();
+                    QString entryTitle = entry["title"].toString();
+                    if (entryTitle.isEmpty()) entryTitle = QString("视频 %1").arg(i + 1);
+                    QString entryUrl = entry["url"].toString();
+                    if (entryUrl.isEmpty()) entryUrl = entry["id"].toString();
+
+                    videoBox->addItem(entryTitle);
+                    videoMap.insert(entryTitle, entryUrl);
+                }
+
+                videoBox->setCurrentIndex(0);
+                videoBox->blockSignals(oldState);
+
+                videoLabel->show();
+                videoBox->show();
+
+                logMessage("✨ 你可以在 '选择视频' 中选择具体哪一P下载，或者选择合并下载。");
+            }
+
             logMessage("⚠️ 合集模式下，将自动为您下载所有分P的最佳画质。");
 
             resolutionBox->clear();
@@ -357,7 +451,7 @@ void MainWindow::onDownloadClicked() {
     retryCount = 0;
     currentUrl = urlInput->text().trimmed();
 
-    if (isMagnetOrTorrent(currentUrl)) {
+    if (DownloadUtils::isMagnetOrTorrent(currentUrl)) {
         startAria2cDownload(currentUrl);
     } else {
         startYtdlpDownload();
@@ -377,7 +471,7 @@ void MainWindow::startYtdlpDownload() {
             return;
         }
 
-        QString downloadDir = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+        QString downloadDir = DownloadUtils::defaultDownloadDir();
         downloadProcess->setWorkingDirectory(downloadDir);
 
         logMessage("🚀 开始下载: " + outName);
@@ -388,10 +482,7 @@ void MainWindow::startYtdlpDownload() {
         statusLabel->setText("正在连接...");
 
         QStringList args;
-        QString browser = cookieBox->currentText();
-        if (browser != "无") {
-            args << "--cookies-from-browser" << browser;
-        }
+        args.append(DownloadUtils::buildCookieArgs(cookieBox->currentText()));
 
         if (!ffmpegPath.isEmpty() && QFile::exists(ffmpegPath)) {
             args << "--ffmpeg-location" << ffmpegPath;
@@ -451,7 +542,7 @@ void MainWindow::startAria2cDownload(const QString &url) {
         return;
     }
 
-    QString downloadDir = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    QString downloadDir = DownloadUtils::defaultDownloadDir();
     aria2cProcess->setWorkingDirectory(downloadDir);
 
     logMessage("🧲 启动 BT/磁力下载");
@@ -462,20 +553,7 @@ void MainWindow::startAria2cDownload(const QString &url) {
     progressBar->setValue(0);
     statusLabel->setText("正在连接 DHT 网络...");
 
-    QStringList args;
-    args << "--continue=true";
-    args << "--max-connection-per-server=16";
-    args << "--split=16";
-    args << "--min-split-size=1M";
-    args << "--enable-dht=true";
-    args << "--enable-peer-exchange=true";
-    args << "--seed-time=0";
-    args << "--auto-file-allocation=none";
-    args << "--console-log-level=notice";
-    args << "--summary-interval=1";
-    args << "--dir" << downloadDir;
-    args << url;
-
+    QStringList args = DownloadUtils::buildAria2cArgs(downloadDir, url);
     aria2cProcess->start(aria2cPath, args);
 }
 
@@ -492,46 +570,15 @@ void MainWindow::handleAria2cOutput() {
         QStringList lines = output.split('\n', Qt::SkipEmptyParts);
 
         for (const QString &line : lines) {
-            // 匹配百分比
-            QRegularExpression pctRe("\\(([0-9.]+)%\\)");
-            QRegularExpressionMatch pctMatch = pctRe.match(line);
-            if (!pctMatch.hasMatch())
+            DownloadProgress p = DownloadProgressParser::parseAria2cLine(line);
+            if (!p.valid)
                 continue;
 
-            int percent = static_cast<int>(pctMatch.captured(1).toDouble());
+            QString sizeStr = p.size;
+            if (p.connections > 0)
+                sizeStr += "  │  连接: " + QString::number(p.connections);
 
-            // 匹配已下载/总大小 (如 "1.2MiB/3.4GiB")
-            QRegularExpression sizeRe("([0-9.]+\\s*[KMG]?i?B)/([0-9.]+\\s*[KMG]?i?B)");
-            QRegularExpressionMatch sizeMatch = sizeRe.match(line);
-            QString sizeStr;
-            if (sizeMatch.hasMatch()) {
-                sizeStr = sizeMatch.captured(1) + " / " + sizeMatch.captured(2);
-            }
-
-            // 匹配下载速度 (如 "DL:2.5MiB")
-            QRegularExpression speedRe("DL:([0-9.]+\\s*[KMG]?i?B)");
-            QRegularExpressionMatch speedMatch = speedRe.match(line);
-            QString speedStr;
-            if (speedMatch.hasMatch()) {
-                speedStr = speedMatch.captured(1) + "/s";
-            }
-
-            // 匹配 ETA (如 "ETA:30m" 或 "ETA:5s")
-            QRegularExpression etaRe("ETA:([0-9hms]+)");
-            QRegularExpressionMatch etaMatch = etaRe.match(line);
-            QString etaStr;
-            if (etaMatch.hasMatch()) {
-                etaStr = etaMatch.captured(1);
-            }
-
-            // 匹配连接数 (如 "CN:16")
-            QRegularExpression cnRe("CN:(\\d+)");
-            QRegularExpressionMatch cnMatch = cnRe.match(line);
-            if (cnMatch.hasMatch()) {
-                sizeStr += "  │  连接: " + cnMatch.captured(1);
-            }
-
-            updateProgressDetail(percent, sizeStr, speedStr, etaStr);
+            updateProgressDetail(p.percent, sizeStr, p.speed, p.eta);
         }
     } catch (...) {
         // 忽略输出解析错误
@@ -574,50 +621,14 @@ void MainWindow::handleDownloadOutput() {
         QStringList lines = output.split('\n', Qt::SkipEmptyParts);
 
         for (const QString &line : lines) {
-            if (!line.contains("[download]"))
+            DownloadProgress p = DownloadProgressParser::parseYtdlpLine(line);
+            if (!p.valid)
                 continue;
 
-            // 匹配百分比
-            QRegularExpression pctRe("\\[download\\]\\s+([0-9.]+)%");
-            QRegularExpressionMatch pctMatch = pctRe.match(line);
-            if (!pctMatch.hasMatch())
-                continue;
+            if (p.eta == QString::fromUtf8("已完成"))
+                p.speed.clear();
 
-            int percent = static_cast<int>(pctMatch.captured(1).toDouble());
-
-            // 匹配已下载 / 总大小  (如 "of   10.00MiB")
-            QRegularExpression sizeRe("of\\s+([0-9.]+\\s*[KMG]?iB)");
-            QRegularExpressionMatch sizeMatch = sizeRe.match(line);
-            QString sizeStr;
-            if (sizeMatch.hasMatch()) {
-                sizeStr = sizeMatch.captured(1).trimmed();
-            }
-
-            // 匹配速度 (如 "at  2.50MiB/s")
-            QRegularExpression speedRe("at\\s+([0-9.]+\\s*[KMG]?iB/s)");
-            QRegularExpressionMatch speedMatch = speedRe.match(line);
-            QString speedStr;
-            if (speedMatch.hasMatch()) {
-                speedStr = speedMatch.captured(1).trimmed();
-            }
-
-            // 匹配 ETA (如 "ETA 00:03")
-            QRegularExpression etaRe("ETA\\s+([0-9:]+|Unknown)");
-            QRegularExpressionMatch etaMatch = etaRe.match(line);
-            QString etaStr;
-            if (etaMatch.hasMatch()) {
-                etaStr = etaMatch.captured(1);
-            }
-
-            // 完成状态：匹配 "in 00:04"
-            QRegularExpression doneRe("in\\s+([0-9:]+)$");
-            QRegularExpressionMatch doneMatch = doneRe.match(line);
-            if (doneMatch.hasMatch()) {
-                etaStr = "已完成";
-                speedStr = "";
-            }
-
-            updateProgressDetail(percent, sizeStr, speedStr, etaStr);
+            updateProgressDetail(p.percent, p.size, p.speed, p.eta);
         }
     } catch (...) {
         // 忽略输出解析错误

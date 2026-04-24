@@ -36,7 +36,6 @@ private:
     void printHeader();
     void printProgress(const QString &line);
     void startDownload();
-    bool isMagnetOrTorrent(const QString &url) const;
 
     // ANSI 颜色
     static const char *RESET;
