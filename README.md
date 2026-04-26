@@ -1,272 +1,171 @@
-# 全能网页视频下载器 (Universal Video Downloader)
+# Universal Video Downloader
 
-![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-blue)
-![Qt](https://img.shields.io/badge/Framework-Qt%206-green)
-![C++](https://img.shields.io/badge/Language-C%2B%2B%2020-orange)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](https://github.com/choBytesMini/UniversalVideoDownloader)
+[![Qt](https://img.shields.io/badge/Qt-6.5%2B-green)](https://www.qt.io/)
+[![C++](https://img.shields.io/badge/C%2B%2B-20-blue)](https://en.cppreference.com/w/cpp/20)
+[![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
 
-基于 **Qt C++** 开发的跨平台视频下载工具，深度集成 `yt-dlp`、`FFmpeg` 和 `aria2c`，提供简洁的图形化界面，支持绕过主流视频网站反爬虫机制、磁力/种子下载和断点续传。
-
----
-
-## ✨ 核心特性
-
-| 功能 | 说明 |
-|------|------|
-| 🧲 **磁力/BT 下载** | 集成 aria2c，支持 magnet 链接和 .torrent 文件下载 |
-| 🔄 **断点续传** | yt-dlp 和 aria2c 均支持断网后自动重试（最多 3 次）并继续未完成的下载 |
-| 🔍 **自动解析网页** | 自动抓取网页 HTML，从 JS/JSON 中提取隐藏的 m3u8/mp4 视频链接 |
-| 🖥️ **跨平台支持** | 原生支持 macOS (Apple Silicon) 和 Windows 10/11 |
-| 🍪 **Cookie 注入** | 从浏览器提取登录凭证，解锁 B站 1080P/4K 大会员画质 |
-| 📂 **合集批量下载** | 支持 B站分P、YouTube 播放列表一键下载，自动按序号命名 |
-| 🔊 **智能音视频合并** | 自动调用 FFmpeg 合并分离的音视频流，输出完整 `.mp4` |
-| ⬇️ **自动下载组件** | Windows 端首次启动自动下载 yt-dlp、ffmpeg 和 aria2c |
-| ⏹ **随时停止** | 支持在下载过程中随时终止任务 |
-| 💻 **终端模式** | 支持 CLI 命令行运行，无需 GUI，节省系统资源 |
+基于 Qt6 C++20 的跨平台视频下载工具，集成 yt-dlp、FFmpeg、aria2c 三大引擎，提供图形界面与命令行双模式。
 
 ---
 
-## 📦 项目结构
+## 支持平台
 
-```
-├── main.cpp              # 程序入口（CLI/GUI 双模式路由）
-├── mainwindow.h/cpp      # 主窗口 UI 与业务逻辑（GUI 模式）
-├── cli_runner.h/cpp      # 终端模式（CLI 模式，无 GUI 开销）
-├── url_extractor.h/cpp   # 网页解析模块（HTML 抓取 + 视频 URL 提取）
-├── platformutils.h/cpp   # 平台抽象层（路径查找、平台检测）
-├── toolmanager.h/cpp     # 工具下载管理器（自动下载/解压）
-├── CMakeLists.txt        # 构建配置
-└── .github/workflows/    # CI/CD 自动构建
-```
+| 平台 | 工具安装 | 自动下载组件 |
+|------|----------|-------------|
+| macOS (ARM / x86_64) | `brew install yt-dlp ffmpeg aria2` | 否 |
+| Windows 10/11 | 手动下载 或 程序自动下载 | 是 |
+| Linux | 系统包管理器 | 否 |
+
+## 支持的链接类型
+
+| 类型 | 引擎 | 示例 |
+|------|------|------|
+| 主流视频网站 | yt-dlp | B站、YouTube、Twitter、TikTok 等 |
+| 磁力链接 | aria2c | `magnet:?xt=urn:btih:...` |
+| 种子文件 | aria2c | `file:///path/to/video.torrent` |
+| Info Hash | aria2c | 40 位十六进制字符串，自动转为磁力 |
+| 网页中的媒体流 | 自动提取 → yt-dlp | 从 HTML/JSON/JS 中提取 m3u8、mpd、mp4 等 |
+
+## 功能
+
+- **双引擎下载** — 普通视频走 yt-dlp（支持 Cookie 注入、画质选择），磁力/种子走 aria2c（DHT + PEX 加速）
+- **Cookie 注入** — 支持 Firefox / Chrome / Edge / Safari 浏览器 Cookie，解锁 B站大会员等登录限定画质
+- **自动解析网页** — 从 HTML 源码中提取隐藏在 JSON/JS/`<video>` 标签中的 m3u8/mpd/mp4 媒体地址
+- **合集批量下载** — B站分P、YouTube 播放列表一键下载，自动编号命名
+- **断点续传** — yt-dlp 和 aria2c 均支持断网续传，自动重试最多 3 次
+- **音视频合并** — 自动调用 FFmpeg 合并分离的音视频流为完整 MP4
+- **系统外观自适应** — 自动跟随 macOS/Windows 深色/亮色模式
+- **Windows 自动部署** — 首次启动自动下载 yt-dlp.exe、ffmpeg.exe、aria2c.exe
+- **命令行模式** — `--cli` 参数进入终端模式，无 GUI 开销，适合远程服务器和脚本
 
 ---
 
-## 🚀 快速开始
+## 安装
 
 ### macOS
 
-#### 1. 安装依赖
-
 ```bash
-# 安装 Homebrew（如未安装）
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-# 安装必要工具
+# 安装依赖
 brew install yt-dlp ffmpeg aria2 cmake qt@6
-```
 
-#### 2. 编译运行
-
-```bash
+# 编译
 cd M3u8Downloader
-
-# 配置并编译
-cmake -S . -B build
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 
-# GUI 模式
+# 运行 GUI
 open build/UniversalVideoDownloader.app
 
-# 终端模式
-./build/UniversalVideoDownloader.app/Contents/MacOS/UniversalVideoDownloader -c <url>
+# 运行 CLI
+./build/UniversalVideoDownloader.app/Contents/MacOS/UniversalVideoDownloader -c <URL>
 ```
-
----
 
 ### Windows
 
-#### 方式一：自动下载（推荐）
+**自动安装**：从 [Releases](../../releases) 下载 `UniversalVideoDownloader.exe`，双击运行，程序会自动检测并下载缺失组件。
 
-1. 从 GitHub Actions 下载最新构建产物并解压
-2. 双击运行 `UniversalVideoDownloader.exe`
-3. 程序会自动检测并提示下载缺失的 yt-dlp、ffmpeg 和 aria2c
+**手动编译**：
 
-#### 方式二：手动配置
+```powershell
+# 安装 Qt 6.5+ 和 CMake，确保 qmake 在 PATH 中
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+```
 
-1. 下载 [yt-dlp.exe](https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe)
-2. 下载 [ffmpeg.exe](https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip) 并解压
-3. 下载 [aria2c.exe](https://github.com/aria2/aria2/releases) 并解压
-4. 将 `yt-dlp.exe`、`ffmpeg.exe` 和 `aria2c.exe` 放入程序所在目录
+**手动安装工具**：将 `yt-dlp.exe`、`ffmpeg.exe`、`aria2c.exe` 放到 `UniversalVideoDownloader.exe` 同级目录。
 
 ---
 
-## 📖 使用指南
+## 使用
 
-### 终端模式（CLI）
+### GUI 模式
 
-不启动 GUI，直接在终端运行，节省内存和 CPU 开销：
+1. 粘贴视频链接或磁力链接
+2. 选择 Cookie 来源（如需要登录）
+3. 点击 **解析视频**，等待分析完成
+4. 选择画质，点击 **开始下载**
+
+**磁力/种子下载**：直接粘贴 magnet 链接或 `file://` 种子路径，程序自动识别并跳转 aria2c 引擎。
+
+### CLI 模式
 
 ```bash
 # 查看帮助
 UniversalVideoDownloader -h
 
-# 下载视频
+# 基础下载
 UniversalVideoDownloader -c https://www.bilibili.com/video/BV1xx411c7XX
+
+# 指定下载目录
+UniversalVideoDownloader -c <URL> -o ~/Videos
+
+# Cookie 注入
+UniversalVideoDownloader -c <URL> -C firefox
+
+# 合集模式
+UniversalVideoDownloader -c <URL> -p
 
 # 磁力下载
 UniversalVideoDownloader -c "magnet:?xt=urn:btih:..."
 
-# 使用 Cookie 下载 B站大会员视频
-UniversalVideoDownloader -c <url> -C firefox
-
-# 指定下载目录
-UniversalVideoDownloader -c <url> -o ~/Videos
-
-# 合集模式
-UniversalVideoDownloader -c <url> -p
-
-# 显示详细日志
-UniversalVideoDownloader -c <url> -v
+# 详细日志
+UniversalVideoDownloader -c <URL> -v
 ```
 
-终端模式使用 ANSI 颜色输出，实时显示下载进度：
-```
-⬇ 42.3%  │  1.50MiB  │  2.50MiB/s  │  剩余 00:03
-```
+CLI 参数一览：
 
-> 💡 终端模式不需要 Qt GUI 依赖，适合 SSH 远程服务器或脚本自动化
-
-### 基本下载（GUI）
-
-1. 在输入框粘贴视频链接（支持 B站、YouTube 等）
-2. 点击 **🔍 解析视频** 等待解析完成
-3. 选择画质（推荐 **自动最佳画质**）
-4. 点击 **⬇️ 开始下载**
-
-### 磁力/BT 下载
-
-1. 在输入框粘贴 `magnet:?xt=...` 链接，或输入 `.torrent` 文件的绝对路径
-2. 程序自动识别为 BT 任务，跳过解析步骤
-3. 点击 **⬇️ 开始下载**，aria2c 引擎将启动 DHT 网络下载
-4. 下载过程中可点击 **⏹ 停止** 随时终止
-
-> 💡 aria2c 自动启用 16 线程分片下载和 DHT/PEX 加速
-
-### 断点续传
-
-- **yt-dlp 引擎**：视频下载中断后，重新点击下载会自动从断点继续
-- **aria2c 引擎**：BT/磁力下载天然支持续传，重启后继续未完成的任务
-- **自动重试**：网络中断时程序会自动等待 3 秒后重试，最多重试 3 次
-
-### 自动解析网页（提取隐藏链接）
-
-部分网站会将视频 URL（如 m3u8）隐藏在 HTML/JavaScript 中，地址栏显示的是网页地址而非视频直链。
-
-1. 确保 **自动解析** 复选框已勾选（默认开启）
-2. 粘贴网页地址，点击解析
-3. 程序会自动抓取网页 HTML，从中匹配并提取 m3u8/mpd/mp4 等媒体流地址
-4. 提取成功后自动交给 yt-dlp 获取详细信息
-
-> 💡 如果自动解析未找到链接，会自动回退到 yt-dlp 直接解析
-
-### Cookie 绕过（解锁高清画质）
-
-1. 在 **使用 Cookie** 下拉菜单选择你登录的浏览器
-2. 确保浏览器已登录目标网站账号
-3. 点击解析，程序会自动获取最高画质
-
-> 💡 推荐使用 Firefox，兼容性最佳
-
-### 合集批量下载
-
-1. 勾选 **合集模式**
-2. 粘贴 B站分P链接或 YouTube 播放列表链接
-3. 点击解析，程序会自动锁定最佳画质
-4. 点击下载，文件会按 `01_标题.mp4` 格式自动命名
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `-c`, `--cli` | 启用终端模式 | — |
+| `-o`, `--output` | 下载目录 | `~/Downloads` |
+| `-C`, `--cookie` | Cookie 来源 (`firefox`, `chrome`, `edge`, `safari`) | 无 |
+| `-p`, `--playlist` | 合集/播放列表模式 | 关闭 |
+| `-f`, `--format` | 画质指定 | `bestvideo+bestaudio/best` |
+| `-v`, `--verbose` | 详细日志 | 关闭 |
+| `-h`, `--help` | 显示帮助 | — |
 
 ---
 
-## 🛠️ 技术架构
+## 项目结构
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                   MainWindow (Qt GUI)                     │
-│  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐ │
-│  │  URL 输入     │   │  画质选择     │   │  进度/日志    │ │
-│  └──────┬───────┘   └──────┬───────┘   └──────────────┘ │
-│         │                   │                             │
-│  ┌──────┴───────┐   ┌──────┴───────┐                     │
-│  │ UrlExtractor │   │   QProcess   │                     │
-│  │ HTML 抓取    │   │  yt-dlp 调用  │                     │
-│  │ URL 提取     │   │  aria2c 调用  │                     │
-│  └──────┬───────┘   │  FFmpeg 合并  │                     │
-│         │           └──────┬───────┘                     │
-│  ┌──────┴──────────────────┴────────────────────────────┐│
-│  │              PlatformUtils                            ││
-│  │  • 平台检测    • yt-dlp/ffmpeg/aria2c 路径查找         ││
-│  └──────────────────────┬───────────────────────────────┘│
-│                         │                                 │
-│  ┌──────────────────────┴───────────────────────────────┐│
-│  │              ToolManager (Windows)                    ││
-│  │  • 自动下载    • 解压管理    • 状态通知                ││
-│  └──────────────────────────────────────────────────────┘│
-└──────────────────────────────────────────────────────────┘
+├── main.cpp                入口（CLI / GUI 路由）
+├── mainwindow.h/cpp        主窗口 UI 与下载编排
+├── cli_runner.h/cpp        命令行模式
+├── download_utils.h/cpp    下载工具函数 + 进度解析器
+├── url_extractor.h/cpp     网页 HTML 抓取 + 媒体 URL 提取
+├── platformutils.h/cpp     平台抽象（路径查找、系统检测）
+├── toolmanager.h/cpp       Windows 端工具自动下载 / 解压
+├── thememanager.h/cpp      深色/亮色外观自适应
+└── CMakeLists.txt          构建配置（Qt 6.5+ / C++20）
 ```
 
-### 核心技术栈
+## 技术栈
 
-- **语言**: C++20
-- **GUI 框架**: Qt 6
-- **构建系统**: CMake
-- **网络请求**: QNetworkAccessManager（网页抓取）
-- **外部引擎**: yt-dlp (视频解析/下载) + FFmpeg (音视频合并) + aria2c (BT/磁力下载)
-- **CI/CD**: GitHub Actions
-
-### 关键设计
-
-- **UrlExtractor**: 网页解析模块，通过 HTTP GET 拉取 HTML 源码，利用正则表达式匹配嵌套在 JS/JSON 中的媒体流地址（m3u8/mpd/mp4），支持反转义处理（`\/` → `/`、`\u002F` → `/` 等）
-- **PlatformUtils**: 平台抽象层，封装跨平台路径查找逻辑（yt-dlp / ffmpeg / aria2c）
-- **ToolManager**: 工具管理器，负责自动下载、解压和状态管理，链式下载队列：yt-dlp → ffmpeg → aria2c
-- **双引擎下载**: 普通视频链接走 yt-dlp（支持 Cookie/画质选择），磁力/种子链接走 aria2c（16 线程 + DHT 加速）
-- **断点续传**: yt-dlp `--continue` + aria2c `--continue=true`，网络中断自动重试最多 3 次
-- **QProcess**: 异步调用外部 CLI 引擎，避免阻塞 UI
+- **语言**：C++20
+- **UI**：Qt 6.5+（Widgets 模块，macOS 原生 Cocoa 风格）
+- **外部引擎**：yt-dlp（视频解析下载） + FFmpeg（合并转码） + aria2c（BT/磁力）
+- **网络**：QNetworkAccessManager（网页抓取 + Windows 工具下载）
+- **构建**：CMake ≥ 3.16
+- **CI/CD**：GitHub Actions
 
 ---
 
-## 🔧 常见问题
+## 常见问题
 
-### 下载后没有声音？
+**B站解析失败？** — 确保浏览器已登录 B站，Cookie 下拉选择正确浏览器，必要时关闭浏览器重试。
 
-- **macOS**: 确认已执行 `brew install ffmpeg`
-- **Windows**: 确认 `ffmpeg.exe` 在程序目录下（或使用自动下载功能）
+**下载无声音？** — 确认 FFmpeg 已安装（macOS: `brew install ffmpeg`，Windows: 放 `ffmpeg.exe` 到程序目录）。
 
-### B站解析失败？
+**自动解析找不到链接？** — 部分网站视频由 JS 动态加载，静态抓取无法获取。程序会自动回退到 yt-dlp 直接解析。无需操作。
 
-- 确保浏览器已登录 B站账号
-- 在 Cookie 下拉菜单选择正确的浏览器
-- 尝试关闭浏览器后重试
+**磁力/BT 下载慢？** — 取决于 peer 可用性。初次连接 DHT 需等待。若超时失败，说明当前无做种者，可稍后重试。
 
-### 自动解析未找到链接？
-
-- 部分网站的视频链接通过 JavaScript 动态加载，静态 HTML 中不包含
-- 此时程序会自动回退到 yt-dlp 直接解析
-- 可以取消勾选 **自动解析** 跳过此步骤
-
-### 磁力/BT 下载慢？
-
-- 初次连接 DHT 网络需要一定时间，请耐心等待
-- 确认 aria2c 已安装（macOS: `brew install aria2`）
-- 冷门资源可能需要较长时间做种
-
-### 下载中断了怎么办？
-
-- 直接重新点击下载，程序会自动从断点继续
-- 如果多次中断，程序会自动重试最多 3 次
-- BT/磁力任务天然支持续传，无需额外操作
+**网络中断怎么办？** — 直接重新点击下载，程序自动从断点续传。最多自动重试 3 次。
 
 ---
 
-## 📄 许可证
+## 许可证
 
-本项目仅供学习和个人使用，请勿用于商业用途。
-
----
-
-## 🤝 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
----
-
-<div align="center">
-  <sub>Built with ❤️ by ChoBits</sub>
-</div>
+MIT License

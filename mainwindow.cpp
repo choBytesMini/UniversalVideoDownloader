@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include "download_utils.h"
 #include "platformutils.h"
+#include "thememanager.h"
 #include "toolmanager.h"
 #include "url_extractor.h"
 #include <QApplication>
@@ -13,8 +14,6 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QMessageBox>
-#include <QEvent>
-#include <QStyleHints>
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -164,7 +163,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(urlExtractor, &UrlExtractor::errorOccurred,
             this, &MainWindow::onUrlExtractError);
 
-    applySystemTheme();
+    themeManager = new ThemeManager(logConsole, stopBtn, statusLabel, this);
 }
 
 MainWindow::~MainWindow() {}
@@ -771,50 +770,3 @@ void MainWindow::handleProcessError(QProcess::ProcessError error) {
     setDownloadUIEnabled(true);
 }
 
-// ============================================================
-// macOS 深色/白天模式自适应
-// ============================================================
-void MainWindow::applySystemTheme() {
-    bool dark = (QApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark);
-
-    if (dark) {
-        logConsole->setStyleSheet(
-            "QTextEdit#logConsole {"
-            "  background-color: #1e1e1e;"
-            "  color: #d4d4d4;"
-            "  font-family: 'SF Mono', 'Menlo', monospace;"
-            "  font-size: 13px;"
-            "  border: none;"
-            "  padding: 8px;"
-            "}"
-        );
-        stopBtn->setStyleSheet(
-            "QPushButton#stopBtn:enabled { color: #ff6b6b; }"
-            "QPushButton#stopBtn:disabled { color: #665555; }"
-        );
-        statusLabel->setStyleSheet("color: #aaaaaa; font-size: 13px;");
-    } else {
-        logConsole->setStyleSheet(
-            "QTextEdit#logConsole {"
-            "  background-color: #f8f8f5;"
-            "  color: #2c2c2c;"
-            "  font-family: 'SF Mono', 'Menlo', monospace;"
-            "  font-size: 13px;"
-            "  border: 1px solid #e0e0e0;"
-            "  padding: 8px;"
-            "}"
-        );
-        stopBtn->setStyleSheet(
-            "QPushButton#stopBtn:enabled { color: #d32f2f; }"
-            "QPushButton#stopBtn:disabled { color: #cccccc; }"
-        );
-        statusLabel->setStyleSheet("color: #888888; font-size: 13px;");
-    }
-}
-
-void MainWindow::changeEvent(QEvent *event) {
-    if (event->type() == QEvent::ThemeChange) {
-        applySystemTheme();
-    }
-    QMainWindow::changeEvent(event);
-}

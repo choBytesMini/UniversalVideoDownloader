@@ -10,11 +10,10 @@
 #include <QProcess>
 #include <QMap>
 #include <QCheckBox>
-#include <QEvent>
-#include <QStyleHints>
 
 class QLabel;
 
+class ThemeManager;
 class ToolManager;
 class UrlExtractor;
 
@@ -24,9 +23,6 @@ class MainWindow : public QMainWindow {
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
-
-protected:
-    void changeEvent(QEvent *event) override;
 
 private slots:
     void onAnalyzeClicked();
@@ -87,10 +83,10 @@ private:
     static const int MAX_RETRIES = 3;
     bool usingAria2c = false; // 当前下载是否使用 aria2c
 
+    ThemeManager *themeManager;
     ToolManager *toolManager;
     UrlExtractor *urlExtractor;
 
-    void applySystemTheme();
     void logMessage(const QString &msg);
     void setupToolManager();
     void startYtdlpAnalyze();
