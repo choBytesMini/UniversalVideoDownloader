@@ -47,7 +47,6 @@ QStringList buildAria2cArgs(const QString &outputDir, const QString &url) {
         "--connect-timeout=60",
         "--bt-tracker-connect-timeout=30",
         "--bt-tracker-timeout=60",
-        "--auto-file-allocation=none",
         "--console-log-level=notice",
         "--summary-interval=1",
         "--dir", outputDir,
