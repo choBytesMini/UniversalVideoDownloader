@@ -13,6 +13,7 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QTimer>
+#include <QUrl>
 #include <QVBoxLayout>
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
@@ -136,6 +137,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     // 信号连接：aria2c 进程
     connect(aria2cProcess, &QProcess::readyReadStandardOutput,
             this, &MainWindow::handleAria2cOutput);
+    connect(aria2cProcess, &QProcess::readyReadStandardError,
+            this, &MainWindow::handleAria2cError);
     connect(aria2cProcess,
             QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this, &MainWindow::handleAria2cFinished);
@@ -206,6 +209,29 @@ void MainWindow::setDownloadUIEnabled(bool enabled) {
 // ============================================================
 void MainWindow::onAnalyzeClicked() {
     currentUrl = urlInput->text().trimmed();
+    if (currentUrl.startsWith('"') && currentUrl.endsWith('"')) {
+        currentUrl = currentUrl.mid(1, currentUrl.length() - 2);
+    }
+    
+    if (currentUrl.startsWith("file://", Qt::CaseInsensitive)) {
+#ifdef Q_OS_WIN
+        if (currentUrl.startsWith("file:///", Qt::CaseInsensitive)) {
+            currentUrl = currentUrl.mid(8);
+        } else {
+            currentUrl = currentUrl.mid(7);
+        }
+#else
+        currentUrl = currentUrl.mid(7);
+#endif
+        // URL 解码：file:// URL 中的特殊字符可能被百分号编码
+        currentUrl = QUrl::fromPercentEncoding(currentUrl.toUtf8());
+    }
+
+    QRegularExpression infoHashRegex("^[0-9a-fA-F]{40}$");
+    if (infoHashRegex.match(currentUrl).hasMatch()) {
+        currentUrl = "magnet:?xt=urn:btih:" + currentUrl;
+    }
+
     if (currentUrl.isEmpty()) {
         logMessage("❌ 请先输入链接");
         return;
@@ -541,6 +567,16 @@ void MainWindow::startAria2cDownload(const QString &url) {
         return;
     }
 
+    // 本地种子文件：检查文件是否存在
+    if (!url.startsWith("magnet:", Qt::CaseInsensitive) && url.endsWith(".torrent", Qt::CaseInsensitive)) {
+        if (!QFile::exists(url)) {
+            logMessage("❌ 种子文件不存在: " + url);
+            setDownloadUIEnabled(true);
+            return;
+        }
+        logMessage("📂 种子文件: " + url);
+    }
+
     QString downloadDir = DownloadUtils::defaultDownloadDir();
     aria2cProcess->setWorkingDirectory(downloadDir);
 
@@ -570,17 +606,27 @@ void MainWindow::handleAria2cOutput() {
 
         for (const QString &line : lines) {
             DownloadProgress p = DownloadProgressParser::parseAria2cLine(line);
-            if (!p.valid)
-                continue;
+            if (p.valid) {
+                QString sizeStr = p.size;
+                if (p.connections > 0)
+                    sizeStr += "  │  连接: " + QString::number(p.connections);
 
-            QString sizeStr = p.size;
-            if (p.connections > 0)
-                sizeStr += "  │  连接: " + QString::number(p.connections);
-
-            updateProgressDetail(p.percent, sizeStr, p.speed, p.eta);
+                updateProgressDetail(p.percent, sizeStr, p.speed, p.eta);
+            } else {
+                // 展示 aria2c 的非进度输出（连接状态、tracker 响应、错误等）
+                logMessage(line.trimmed());
+            }
         }
     } catch (...) {
         // 忽略输出解析错误
+    }
+}
+
+void MainWindow::handleAria2cError() {
+    QString err = QString::fromUtf8(aria2cProcess->readAllStandardError());
+    QStringList lines = err.split('\n', Qt::SkipEmptyParts);
+    for (const QString &line : lines) {
+        logMessage("[aria2c] " + line.trimmed());
     }
 }
 
@@ -601,6 +647,12 @@ void MainWindow::handleAria2cFinished(int exitCode, QProcess::ExitStatus exitSta
             return;
         }
         logMessage("❌ BT/磁力下载失败，已达最大重试次数。");
+        logMessage("💡 可能原因：");
+        logMessage("   1. 当前种子无可用做种者（seeders=0）");
+        logMessage("   2. Tracker 服务器不可达");
+        logMessage("   3. DHT 网络未找到 peers");
+        logMessage("   4. 防火墙阻挡了 BT 端口");
+        logMessage("   请确认种子有效或稍后重试。");
     }
 
     setDownloadUIEnabled(true);
@@ -694,7 +746,18 @@ void MainWindow::onStopClicked() {
 // 进程启动错误
 // ============================================================
 void MainWindow::handleProcessError(QProcess::ProcessError error) {
-    Q_UNUSED(error)
-    logMessage("❌ 引擎启动失败，请确保系统已安装 yt-dlp、ffmpeg 和 aria2c。");
+    const char* errorMsgs[] = {
+        "进程启动失败：可执行文件不存在或权限不足",
+        "进程启动超时",
+        "进程写入错误",
+        "进程读取错误",
+        "未知错误"
+    };
+    int idx = static_cast<int>(error);
+    if (idx >= 0 && idx < 5) {
+        logMessage(QString("❌ %1").arg(errorMsgs[idx]));
+    } else {
+        logMessage("❌ 引擎启动失败，请确保系统已安装 yt-dlp、ffmpeg 和 aria2c。");
+    }
     setDownloadUIEnabled(true);
 }

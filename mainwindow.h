@@ -36,6 +36,7 @@ private slots:
 
     // aria2c QProcess 回调
     void handleAria2cOutput();
+    void handleAria2cError();
     void handleAria2cFinished(int exitCode, QProcess::ExitStatus exitStatus);
 
     // URL 自动解析回调

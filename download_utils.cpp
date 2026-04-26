@@ -5,8 +5,29 @@
 namespace DownloadUtils {
 
 bool isMagnetOrTorrent(const QString &url) {
-    return url.startsWith("magnet:", Qt::CaseInsensitive)
-        || url.endsWith(".torrent", Qt::CaseInsensitive);
+    QString cleanUrl = url.trimmed();
+    if (cleanUrl.startsWith('"') && cleanUrl.endsWith('"')) {
+        cleanUrl = cleanUrl.mid(1, cleanUrl.length() - 2);
+    }
+
+    // 40-character hex info hash
+    QRegularExpression infoHashRegex("^[0-9a-fA-F]{40}$");
+    if (infoHashRegex.match(cleanUrl).hasMatch()) {
+        return true;
+    }
+
+    // magnet links
+    if (cleanUrl.startsWith("magnet:", Qt::CaseInsensitive)) {
+        return true;
+    }
+
+    // .torrent with optional url parameters or trailing quotes
+    QRegularExpression torrentRegex("\\.torrent([\\?\"'].*)?$", QRegularExpression::CaseInsensitiveOption);
+    if (torrentRegex.match(cleanUrl).hasMatch()) {
+        return true;
+    }
+
+    return false;
 }
 
 QString defaultDownloadDir() {
@@ -14,7 +35,7 @@ QString defaultDownloadDir() {
 }
 
 QStringList buildAria2cArgs(const QString &outputDir, const QString &url) {
-    return {
+    QStringList args = {
         "--continue=true",
         "--max-connection-per-server=16",
         "--split=16",
@@ -22,12 +43,23 @@ QStringList buildAria2cArgs(const QString &outputDir, const QString &url) {
         "--enable-dht=true",
         "--enable-peer-exchange=true",
         "--seed-time=0",
+        "--bt-stop-timeout=300",
+        "--connect-timeout=60",
+        "--bt-tracker-connect-timeout=30",
+        "--bt-tracker-timeout=60",
         "--auto-file-allocation=none",
         "--console-log-level=notice",
         "--summary-interval=1",
         "--dir", outputDir,
-        url
     };
+
+    // magnet 链接需要保存元数据以便断点续传
+    if (url.startsWith("magnet:", Qt::CaseInsensitive)) {
+        args << "--bt-save-metadata=true";
+    }
+
+    args << url;
+    return args;
 }
 
 QStringList buildCookieArgs(const QString &browser) {
